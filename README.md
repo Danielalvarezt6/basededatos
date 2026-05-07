@@ -25,8 +25,8 @@ Este proyecto **replica esa comparación pero con el dataset ASSISTments** (6.1 
 
 ### Dataset
 
-**ASSISTments 2009–2010** — 6.1 millones de interacciones de aprendizaje.  
-Fuente: https://sites.google.com/site/assistmentsdata/home/2009-2010-assistment
+**ASSISTments 2012–2013** — 6.1 millones de interacciones de aprendizaje.  
+Fuente: [https://sites.google.com/site/assistmentsdata/home/2009-2010-assistment](https://www.kaggle.com/datasets/nicolaswattiez/skillbuilder-data-2009-2010)
 
 | # | Variable | Descripción |
 |---|---|---|
@@ -134,7 +134,7 @@ sys.path.insert(0, r'C:\python_packages')
 ## Ejecución del pipeline (ASSISTments)
 
 > **Nota:** El archivo `dataset.csv` (2.8 GB) no está incluido en el repositorio.  
-> Descárgalo desde: https://sites.google.com/site/assistmentsdata/home/2009-2010-assistment
+> Descárgalo desde: (https://www.kaggle.com/datasets/nicolaswattiez/skillbuilder-data-2009-2010)
 
 ```bash
 # 1. Instalar la extensión en PostgreSQL
