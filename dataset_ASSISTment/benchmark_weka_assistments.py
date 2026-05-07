@@ -90,7 +90,7 @@ def df_a_arff(df: pd.DataFrame, nombre_relacion: str = "assistments") -> str:
 
 
 def ejecutar_weka_kmeans(arff_path: str, k: int,
-                         max_iter: int = 500, seed: int = 10) -> float | None:
+                         max_iter: int = 300, seed: int = 10) -> float | None:
     if not os.path.exists(WEKA_JAR_PATH):
         raise FileNotFoundError(f"No se encontró weka.jar en: {WEKA_JAR_PATH}")
     java_exe = JAVA_EXE_PATH if os.path.exists(JAVA_EXE_PATH) else "java"
@@ -100,6 +100,7 @@ def ejecutar_weka_kmeans(arff_path: str, k: int,
         "weka.clusterers.SimpleKMeans",
         "-N", str(k),
         "-I", str(max_iter),
+        "-init", "1",   # 1 = k-means++ initialization (igual que extensión y sklearn)
         "-S", str(seed),
         "-t", arff_path,
     ]

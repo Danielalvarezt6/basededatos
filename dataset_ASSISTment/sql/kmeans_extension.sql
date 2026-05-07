@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- EXTENSIÃ“N K-MEANS PARA POSTGRESQL (Arquitectura Medianamente Acoplada)
 -- Replica: Vallejo-Cabrera et al., Rev. Fac. Ing., Vol. 34, No. 74 (2025)
 -- DOI: 10.19053/01211129.v34.n74.2025.20737
@@ -23,6 +23,7 @@ import sys, json
 _usp = r'C:\python_packages'
 if _usp not in sys.path:
     sys.path.insert(0, _usp)
+import numpy as np
 
 col_clause = ", ".join(f'"{c}"' for c in columns) if columns else "*"
 query = f"SELECT {col_clause} FROM {source_table}"
@@ -32,22 +33,31 @@ if not rows:
     return json.dumps({"ok": False, "error": "La tabla origen esta vacia"})
 
 col_names = list(rows[0].keys())
-data = [list(r.values()) for r in rows]
+# Construir numpy array de una sola vez (sin loop de inserts fila por fila)
+data = np.array(
+    [[float(r[c]) if r[c] is not None else 0.0 for c in col_names] for r in rows],
+    dtype=np.float64
+)
 
+# Guardar en GD para que preprocessing_py lo lea sin volver a consultar la tabla
+GD["cl_data_matrix"] = data
+GD["cl_data_cols"]   = col_names
+
+# Escribir cl_data para que el usuario pueda consultarla con SQL
 plpy.execute("DROP TABLE IF EXISTS clustering.cl_data")
 col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in col_names)
 plpy.execute(f"CREATE TABLE clustering.cl_data ({col_defs})")
-
+vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(col_names))])
 plan = plpy.prepare(
-    f"INSERT INTO clustering.cl_data VALUES ({', '.join(['$' + str(i+1) for i in range(len(col_names))])})",
+    f"INSERT INTO clustering.cl_data VALUES ({vals_clause})",
     ["DOUBLE PRECISION"] * len(col_names)
 )
-for row in data:
-    plpy.execute(plan, [float(v) if v is not None else None for v in row])
+for row in data.tolist():
+    plpy.execute(plan, row)
 
 return json.dumps({
     "ok": True,
-    "rows": len(data),
+    "rows": int(data.shape[0]),
     "columns": col_names,
     "message": f"Datos cargados en clustering.cl_data desde '{source_table}'"
 })
@@ -111,18 +121,23 @@ if _usp not in sys.path:
     sys.path.insert(0, _usp)
 import numpy as np
 
-rows = plpy.execute("SELECT * FROM clustering.cl_data")
-if not rows:
-    return json.dumps({"ok": False, "error": "clustering.cl_data esta vacia"})
-
-col_names = list(rows[0].keys())
-X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
+# Leer de GD si load_table_py ya cargó los datos en esta sesión;
+# si no (llamada directa), leer desde la tabla cl_data
+if "cl_data_matrix" in GD:
+    X         = GD["cl_data_matrix"].copy()
+    col_names = GD["cl_data_cols"]
+else:
+    rows = plpy.execute("SELECT * FROM clustering.cl_data")
+    if not rows:
+        return json.dumps({"ok": False, "error": "clustering.cl_data esta vacia"})
+    col_names = list(rows[0].keys())
+    X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
 
 num_cols = list(numeric_cols) if numeric_cols else col_names
 cat_cols = list(categorical_cols) if categorical_cols else []
 num_cols = [c for c in num_cols if c not in cat_cols]
 
-# NormalizaciÃ³n Min-Max manual con numpy
+# Normalización Min-Max con numpy
 col_idx = {c: i for i, c in enumerate(col_names)}
 num_idx = [col_idx[c] for c in num_cols]
 X_num = X[:, num_idx]
@@ -131,16 +146,19 @@ maxs = X_num.max(axis=0)
 rngs = np.where(maxs - mins == 0, 1.0, maxs - mins)
 X[:, num_idx] = (X_num - mins) / rngs
 
-# Para el benchmark no hay columnas categÃ³ricas en Wine Quality,
-# por lo que one-hot encoding no aplica aquÃ­
 final_cols = col_names
 
+# Guardar en GD para que kmeans_py no tenga que releer la tabla
+GD["cl_data_pre_matrix"] = X
+GD["cl_data_pre_cols"]   = final_cols
+
+# Escribir cl_data_pre para que el usuario pueda consultarla con SQL
 plpy.execute("DROP TABLE IF EXISTS clustering.cl_data_pre")
 col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in final_cols)
 plpy.execute(f"CREATE TABLE clustering.cl_data_pre ({col_defs})")
-
+vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(final_cols))])
 plan = plpy.prepare(
-    f"INSERT INTO clustering.cl_data_pre VALUES ({', '.join(['$' + str(i+1) for i in range(len(final_cols))])})",
+    f"INSERT INTO clustering.cl_data_pre VALUES ({vals_clause})",
     ["DOUBLE PRECISION"] * len(final_cols)
 )
 for row in X.tolist():
@@ -177,18 +195,23 @@ if _usp not in sys.path:
 import numpy as np
 from sklearn.cluster import KMeans
 
-rows = plpy.execute("SELECT * FROM clustering.cl_data_pre")
-if not rows:
-    return json.dumps({"ok": False, "error": "clustering.cl_data_pre esta vacia. Ejecuta preprocessing_py primero."})
-
-col_names = list(rows[0].keys())
-X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
+# Leer de GD si preprocessing_py ya normalizó los datos en esta sesión;
+# si no (llamada directa), leer desde la tabla cl_data_pre
+if "cl_data_pre_matrix" in GD:
+    X         = GD["cl_data_pre_matrix"]
+    col_names = GD["cl_data_pre_cols"]
+else:
+    rows = plpy.execute("SELECT * FROM clustering.cl_data_pre")
+    if not rows:
+        return json.dumps({"ok": False, "error": "clustering.cl_data_pre esta vacia. Ejecuta preprocessing_py primero."})
+    col_names = list(rows[0].keys())
+    X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
 
 t0 = time.perf_counter()
 model = KMeans(
     n_clusters=k,
     init="k-means++",
-    n_init=10,
+    n_init=1,
     max_iter=max_iter,
     random_state=seed
 )

@@ -72,7 +72,7 @@ def normalizar(df: pd.DataFrame) -> np.ndarray:
 
 
 def correr_kmeans(X: np.ndarray, k: int) -> tuple[float, int, float]:
-    modelo = KMeans(n_clusters=k, init="random", max_iter=300,
+    modelo = KMeans(n_clusters=k, init="k-means++", max_iter=300,
                     random_state=42, n_init=1)
     t0 = time.perf_counter()
     modelo.fit(X)
