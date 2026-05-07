@@ -1,0 +1,214 @@
+"""
+Benchmark Python scikit-learn KMeans — Dataset ASSISTments (6.1M reales)
+  - Prueba 1: variando número de registros (1K → 1M, todos reales)
+  - Prueba 2: variando número de atributos (100K filas reales fijas)
+
+Salidas:
+  results/assistments/prueba1_sklearn.csv
+  results/assistments/prueba2_sklearn.csv
+"""
+
+import os
+import time
+import numpy as np
+import pandas as pd
+import psycopg2
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import MinMaxScaler
+
+# =====================================================
+# CONFIGURACIÓN
+# =====================================================
+DB_NAME     = "assistments_clustering"
+DB_USER     = "postgres"
+DB_PASSWORD = "danonino32"
+DB_HOST     = "127.0.0.1"
+DB_PORT     = "5432"
+
+TABLA_REAL  = "interacciones"
+TAMANOS     = [1_000, 2_000, 5_000, 10_000, 21_000, 50_000, 100_000, 500_000, 1_000_000]
+K_VALORES   = list(range(2, 11))
+N_PRUEBA2   = 100_000
+
+TODAS_LAS_COLUMNAS = [
+    "ms_first_response",
+    "hint_count",
+    "attempt_count",
+    "correct",
+    "original",
+    "bottom_hint",
+    "overlap_time",
+    "Average_confidence(FRUSTRATED)",
+    "Average_confidence(CONFUSED)",
+    "Average_confidence(CONCENTRATING)",
+    "Average_confidence(BORED)",
+]
+
+SUBCONJUNTOS_ATRIBUTOS = {n: TODAS_LAS_COLUMNAS[:n] for n in [3, 5, 7, 9, 11]}
+
+
+# =====================================================
+# UTILIDADES
+# =====================================================
+def obtener_muestra_df(tamano: int, cols: list, semilla: int = 42) -> pd.DataFrame:
+    conn = psycopg2.connect(
+        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT
+    )
+    col_clause = ", ".join(f'"{c}"' for c in cols)
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT setseed({semilla / 10**9:.6f})")
+        conn.commit()
+    df = pd.read_sql(
+        f"SELECT {col_clause} FROM {TABLA_REAL} ORDER BY random() LIMIT {tamano}",
+        conn
+    )
+    conn.close()
+    return df
+
+
+def normalizar(df: pd.DataFrame) -> np.ndarray:
+    return MinMaxScaler().fit_transform(df.values.astype(float))
+
+
+def correr_kmeans(X: np.ndarray, k: int) -> tuple[float, int, float]:
+    modelo = KMeans(n_clusters=k, init="random", max_iter=300,
+                    random_state=42, n_init=1)
+    t0 = time.perf_counter()
+    modelo.fit(X)
+    return time.perf_counter() - t0, modelo.n_iter_, modelo.inertia_
+
+
+# =====================================================
+# PRUEBA 1 — Variando registros
+# =====================================================
+def prueba1_sklearn():
+    os.makedirs("results/assistments", exist_ok=True)
+    resultados = []
+
+    print("\n" + "=" * 70)
+    print("PRUEBA 1 — sklearn KMeans: variando registros (datos REALES)")
+    print("Dataset: ASSISTments — 6.1M interacciones reales")
+    print("=" * 70)
+
+    total_ejecuciones = len(TAMANOS) * len(K_VALORES)
+    n_ejecucion = 0
+
+    for tamano in TAMANOS:
+        print(f"\n{'─' * 60}")
+        print(f"[+] Descargando muestra real de {tamano:,} filas...")
+        try:
+            df = obtener_muestra_df(tamano, TODAS_LAS_COLUMNAS)
+        except Exception as e:
+            print(f"[!] Error: {e}")
+            continue
+
+        # Tiempo de descarga desde PostgreSQL (transferencia de red)
+        t0_descarga = time.perf_counter()
+        df = obtener_muestra_df(tamano, TODAS_LAS_COLUMNAS)
+        t_descarga = time.perf_counter() - t0_descarga
+
+        print(f"[+] Normalizando...")
+        t0_norm = time.perf_counter()
+        X = normalizar(df)
+        t_norm = time.perf_counter() - t0_norm
+        t_carga = t_descarga + t_norm
+        print(f"[✓] Descarga BD: {t_descarga:.4f}s | Normalización: {t_norm:.4f}s | Total carga: {t_carga:.4f}s")
+
+        for k in K_VALORES:
+            n_ejecucion += 1
+            print(f"\n  [{n_ejecucion}/{total_ejecuciones}] registros={tamano:,} | k={k}",
+                  end=" ... ", flush=True)
+            try:
+                t_kmeans, iters, inercia = correr_kmeans(X, k)
+                t_respuesta = t_carga + t_kmeans
+                print(f"kmeans={t_kmeans:.4f}s | carga={t_carga:.4f}s | respuesta={t_respuesta:.4f}s | iters={iters}")
+                resultados.append({
+                    "herramienta":         "Python sklearn",
+                    "registros":           tamano,
+                    "num_grupos":          k,
+                    "num_atributos":       len(TODAS_LAS_COLUMNAS),
+                    "tiempo_carga_s":      round(t_carga, 6),
+                    "tiempo_kmeans_s":     round(t_kmeans, 6),
+                    "tiempo_total_s":      round(t_norm + t_kmeans, 6),
+                    "tiempo_respuesta_s":  round(t_respuesta, 6),
+                    "iteraciones":         iters,
+                    "inercia_wcss":        round(inercia, 4),
+                })
+            except Exception as e:
+                print(f"ERROR: {e}")
+
+    if resultados:
+        pd.DataFrame(resultados).to_csv(
+            "results/assistments/prueba1_sklearn.csv", index=False, encoding="utf-8")
+        print("\n[✓] Guardado: results/assistments/prueba1_sklearn.csv")
+    return resultados
+
+
+# =====================================================
+# PRUEBA 2 — Variando atributos
+# =====================================================
+def prueba2_sklearn():
+    os.makedirs("results/assistments", exist_ok=True)
+    resultados = []
+
+    print("\n" + "=" * 70)
+    print(f"PRUEBA 2 — sklearn KMeans: variando atributos | {N_PRUEBA2:,} filas reales")
+    print("=" * 70)
+
+    print(f"\n[+] Descargando muestra fija de {N_PRUEBA2:,} filas reales...")
+    try:
+        t0_desc = time.perf_counter()
+        df_completo = obtener_muestra_df(N_PRUEBA2, TODAS_LAS_COLUMNAS)
+        t_descarga_p2 = time.perf_counter() - t0_desc
+        print(f"[✓] Descarga BD: {t_descarga_p2:.4f} s")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+        return []
+
+    total_ejecuciones = len(SUBCONJUNTOS_ATRIBUTOS) * len(K_VALORES)
+    n_ejecucion = 0
+
+    for n_attrs, cols in SUBCONJUNTOS_ATRIBUTOS.items():
+        print(f"\n{'─' * 60}")
+        print(f"[+] Normalizando {n_attrs} atributos...")
+        t0_norm = time.perf_counter()
+        X = normalizar(df_completo[cols])
+        t_norm = time.perf_counter() - t0_norm
+        # La descarga ya se hizo una vez; se distribuye igual para todos los subconjuntos
+        t_carga = t_descarga_p2 + t_norm
+        print(f"[✓] Normalización: {t_norm:.4f}s | Carga total: {t_carga:.4f}s")
+
+        for k in K_VALORES:
+            n_ejecucion += 1
+            print(f"\n  [{n_ejecucion}/{total_ejecuciones}] atributos={n_attrs} | k={k}",
+                  end=" ... ", flush=True)
+            try:
+                t_kmeans, iters, inercia = correr_kmeans(X, k)
+                t_respuesta = t_carga + t_kmeans
+                print(f"kmeans={t_kmeans:.4f}s | carga={t_carga:.4f}s | respuesta={t_respuesta:.4f}s | iters={iters}")
+                resultados.append({
+                    "herramienta":         "Python sklearn",
+                    "registros":           N_PRUEBA2,
+                    "num_grupos":          k,
+                    "num_atributos":       n_attrs,
+                    "tiempo_carga_s":      round(t_carga, 6),
+                    "tiempo_kmeans_s":     round(t_kmeans, 6),
+                    "tiempo_total_s":      round(t_norm + t_kmeans, 6),
+                    "tiempo_respuesta_s":  round(t_respuesta, 6),
+                    "iteraciones":         iters,
+                    "inercia_wcss":        round(inercia, 4),
+                })
+            except Exception as e:
+                print(f"ERROR: {e}")
+
+    if resultados:
+        pd.DataFrame(resultados).to_csv(
+            "results/assistments/prueba2_sklearn.csv", index=False, encoding="utf-8")
+        print("\n[✓] Guardado: results/assistments/prueba2_sklearn.csv")
+    return resultados
+
+
+if __name__ == "__main__":
+    prueba1_sklearn()
+    prueba2_sklearn()

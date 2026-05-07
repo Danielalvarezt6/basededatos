@@ -1,0 +1,34 @@
+# ── Entornos virtuales ──────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Datasets grandes (no subir a GitHub) ────────────────────────
+dataset_ASSISTment/dataset.csv
+dataset_ASSISTment/student_profiles.csv
+dataset_ASSISTment/wine_quality.csv
+
+# ── Archivos temporales de PostgreSQL / modelos ─────────────────
+*.pickle
+C:/Temp/
+
+# ── Instaladores y comprimidos ──────────────────────────────────
+*.msi
+*.zip
+*.exe
+
+# ── IDE / editores ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Sistema operativo ───────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ── Archivos ARFF temporales de Weka ───────────────────────────
+*.arff
