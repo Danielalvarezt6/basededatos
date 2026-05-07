@@ -11,6 +11,9 @@ CREATE SCHEMA IF NOT EXISTS clustering;
 
 -- =============================================================================
 -- 1. load_table_py
+-- Lee la tabla fuente directamente a memoria (GD). Sin archivos temporales
+-- ni tablas intermedias: los datos nunca salen de PostgreSQL.
+-- Para persistir cl_data llama a save_data_py() después.
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.load_table_py(
     source_table TEXT,
@@ -26,27 +29,53 @@ if _usp not in sys.path:
 import numpy as np
 
 col_clause = ", ".join(f'"{c}"' for c in columns) if columns else "*"
-query = f"SELECT {col_clause} FROM {source_table}"
-
-rows = plpy.execute(query)
+rows = plpy.execute(f"SELECT {col_clause} FROM {source_table}")
 if not rows:
     return json.dumps({"ok": False, "error": "La tabla origen esta vacia"})
 
 col_names = list(rows[0].keys())
-# Construir numpy array de una sola vez (sin loop de inserts fila por fila)
 data = np.array(
     [[float(r[c]) if r[c] is not None else 0.0 for c in col_names] for r in rows],
     dtype=np.float64
 )
 
-# Guardar en GD para que preprocessing_py lo lea sin volver a consultar la tabla
+# Todo queda en memoria dentro de PostgreSQL — sin disco, sin red
 GD["cl_data_matrix"] = data
 GD["cl_data_cols"]   = col_names
 
-# Escribir cl_data para que el usuario pueda consultarla con SQL
+return json.dumps({
+    "ok": True,
+    "rows": int(data.shape[0]),
+    "columns": col_names,
+    "message": f"Datos cargados en memoria desde '{source_table}'"
+})
+$func$;
+
+
+-- =============================================================================
+-- 1b. save_data_py  (opcional — solo para producción)
+-- Persiste cl_data_matrix de GD a la tabla clustering.cl_data
+-- para que el usuario pueda consultarla con SQL.
+-- =============================================================================
+CREATE OR REPLACE FUNCTION clustering.save_data_py()
+RETURNS TEXT
+LANGUAGE plpython3u
+AS $func$
+import sys, json
+_usp = r'C:\python_packages'
+if _usp not in sys.path:
+    sys.path.insert(0, _usp)
+
+if "cl_data_matrix" not in GD:
+    return json.dumps({"ok": False, "error": "No hay datos en memoria. Ejecuta load_table_py primero."})
+
+data      = GD["cl_data_matrix"]
+col_names = GD["cl_data_cols"]
+
 plpy.execute("DROP TABLE IF EXISTS clustering.cl_data")
 col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in col_names)
 plpy.execute(f"CREATE TABLE clustering.cl_data ({col_defs})")
+
 vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(col_names))])
 plan = plpy.prepare(
     f"INSERT INTO clustering.cl_data VALUES ({vals_clause})",
@@ -58,8 +87,7 @@ for row in data.tolist():
 return json.dumps({
     "ok": True,
     "rows": int(data.shape[0]),
-    "columns": col_names,
-    "message": f"Datos cargados en clustering.cl_data desde '{source_table}'"
+    "message": "Datos persistidos en clustering.cl_data"
 })
 $func$;
 
@@ -107,6 +135,8 @@ $func$;
 
 -- =============================================================================
 -- 3. preprocessing_py
+-- Normaliza en memoria (GD). Sin archivos temporales ni tablas intermedias.
+-- Para persistir cl_data_pre llama a save_preprocessed_py() después.
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.preprocessing_py(
     numeric_cols     TEXT[] DEFAULT NULL,
@@ -121,23 +151,17 @@ if _usp not in sys.path:
     sys.path.insert(0, _usp)
 import numpy as np
 
-# Leer de GD si load_table_py ya cargó los datos en esta sesión;
-# si no (llamada directa), leer desde la tabla cl_data
-if "cl_data_matrix" in GD:
-    X         = GD["cl_data_matrix"].copy()
-    col_names = GD["cl_data_cols"]
-else:
-    rows = plpy.execute("SELECT * FROM clustering.cl_data")
-    if not rows:
-        return json.dumps({"ok": False, "error": "clustering.cl_data esta vacia"})
-    col_names = list(rows[0].keys())
-    X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
+if "cl_data_matrix" not in GD:
+    return json.dumps({"ok": False, "error": "No hay datos en memoria. Ejecuta load_table_py primero."})
+
+X         = GD["cl_data_matrix"].copy()
+col_names = GD["cl_data_cols"]
 
 num_cols = list(numeric_cols) if numeric_cols else col_names
 cat_cols = list(categorical_cols) if categorical_cols else []
 num_cols = [c for c in num_cols if c not in cat_cols]
 
-# Normalización Min-Max con numpy
+# Normalización Min-Max con numpy — todo en memoria dentro de PostgreSQL
 col_idx = {c: i for i, c in enumerate(col_names)}
 num_idx = [col_idx[c] for c in num_cols]
 X_num = X[:, num_idx]
@@ -147,22 +171,8 @@ rngs = np.where(maxs - mins == 0, 1.0, maxs - mins)
 X[:, num_idx] = (X_num - mins) / rngs
 
 final_cols = col_names
-
-# Guardar en GD para que kmeans_py no tenga que releer la tabla
 GD["cl_data_pre_matrix"] = X
 GD["cl_data_pre_cols"]   = final_cols
-
-# Escribir cl_data_pre para que el usuario pueda consultarla con SQL
-plpy.execute("DROP TABLE IF EXISTS clustering.cl_data_pre")
-col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in final_cols)
-plpy.execute(f"CREATE TABLE clustering.cl_data_pre ({col_defs})")
-vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(final_cols))])
-plan = plpy.prepare(
-    f"INSERT INTO clustering.cl_data_pre VALUES ({vals_clause})",
-    ["DOUBLE PRECISION"] * len(final_cols)
-)
-for row in X.tolist():
-    plpy.execute(plan, row)
 
 return json.dumps({
     "ok": True,
@@ -171,7 +181,47 @@ return json.dumps({
     "processed_cols": len(final_cols),
     "numeric_normalized": num_cols,
     "categorical_encoded": cat_cols,
-    "message": "Preprocesamiento completado -> clustering.cl_data_pre"
+    "message": "Preprocesamiento completado en memoria"
+})
+$func$;
+
+
+-- =============================================================================
+-- 3b. save_preprocessed_py  (opcional — solo para producción)
+-- Persiste cl_data_pre_matrix de GD a la tabla clustering.cl_data_pre
+-- para que el usuario pueda consultarla con SQL.
+-- =============================================================================
+CREATE OR REPLACE FUNCTION clustering.save_preprocessed_py()
+RETURNS TEXT
+LANGUAGE plpython3u
+AS $func$
+import sys, json
+_usp = r'C:\python_packages'
+if _usp not in sys.path:
+    sys.path.insert(0, _usp)
+
+if "cl_data_pre_matrix" not in GD:
+    return json.dumps({"ok": False, "error": "No hay datos preprocesados en memoria. Ejecuta preprocessing_py primero."})
+
+X         = GD["cl_data_pre_matrix"]
+col_names = GD["cl_data_pre_cols"]
+
+plpy.execute("DROP TABLE IF EXISTS clustering.cl_data_pre")
+col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in col_names)
+plpy.execute(f"CREATE TABLE clustering.cl_data_pre ({col_defs})")
+
+vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(col_names))])
+plan = plpy.prepare(
+    f"INSERT INTO clustering.cl_data_pre VALUES ({vals_clause})",
+    ["DOUBLE PRECISION"] * len(col_names)
+)
+for row in X.tolist():
+    plpy.execute(plan, row)
+
+return json.dumps({
+    "ok": True,
+    "rows": int(X.shape[0]),
+    "message": "Datos preprocesados persistidos en clustering.cl_data_pre"
 })
 $func$;
 
