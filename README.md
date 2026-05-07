@@ -147,18 +147,6 @@ Salida por defecto: **`results/assistments/figuras/`** (PNG, 150 DPI).
 
 Tras cada corrida del pipeline, los scripts también guardan **`tabla_resumen_prueba1.csv`** y **`tabla_resumen_prueba2.csv`** en `results/assistments/` (métrica principal: **`tiempo_respuesta_s`**). Los logs locales pueden guardarse en `results/assistments/logs/` (carpeta ignorada por git).
 
----
-
-## Documentación adicional (cartel / marco teórico)
-
-| Archivo | Uso |
-|---------|-----|
-| [`docs/documento_cartel.md`](docs/documento_cartel.md) | Borrador estructurado (título, introducción, materiales y métodos, resultados, conclusiones, referencias) para el cartel CECEN. |
-| [`docs/arquitecturas.md`](docs/arquitecturas.md) | Resumen del estado del arte de **Timarán** sobre arquitecturas débil / mediana / fuerte acopladas al SGBD. |
-| [`docs/correciones.md`](docs/correciones.md) | Bitácora técnica de correcciones aplicadas a la metodología de benchmarks (semillas, métricas Weka, comparabilidad de tiempos). |
-
----
-
 ## Estructura del proyecto
 
 ```
