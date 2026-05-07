@@ -53,30 +53,25 @@ SUBCONJUNTOS_ATRIBUTOS = {n: TODAS_LAS_COLUMNAS[:n] for n in [3, 5, 7, 9, 11]}
 # =====================================================
 # UTILIDADES
 # =====================================================
-def obtener_muestra_df(tamano: int, cols: list, semilla: int = 42) -> pd.DataFrame:
-    """Descarga una muestra aleatoria real de PostgreSQL como DataFrame."""
-    conn = psycopg2.connect(
-        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
-        host=DB_HOST, port=DB_PORT
-    )
+def crear_tabla_muestra(cur, conn, tamano: int, cols: list) -> str:
+    """
+    Materializa N filas aleatorias en una tabla temporal (no se cronometra).
+    Usa setseed(0.42) — IDÉNTICO a la extensión y sklearn (corrección P1).
+    Devuelve el nombre de la tabla para que el benchmark la lea después.
+    """
+    nombre = f"_muestra_{tamano}"
     col_clause = ", ".join(f'"{c}"' for c in cols)
-    query = f"""
-        SELECT setseed({semilla / 10**9:.6f});
+    # Semilla idéntica a la extensión: setseed(0.42) — NO setseed(0.000000042)
+    cur.execute("SELECT setseed(0.42)")
+    cur.execute(f"""
+        DROP TABLE IF EXISTS {nombre};
+        CREATE TEMP TABLE {nombre} AS
         SELECT {col_clause}
         FROM {TABLA_REAL}
         ORDER BY random()
         LIMIT {tamano}
-    """
-    # Ejecutar las dos sentencias por separado
-    with conn.cursor() as cur:
-        cur.execute(f"SELECT setseed({semilla / 10**9:.6f})")
-        conn.commit()
-    df = pd.read_sql(
-        f"SELECT {col_clause} FROM {TABLA_REAL} ORDER BY random() LIMIT {tamano}",
-        conn
-    )
-    conn.close()
-    return df
+    """)
+    return nombre
 
 
 def df_a_arff(df: pd.DataFrame, nombre_relacion: str = "assistments") -> str:
@@ -90,7 +85,7 @@ def df_a_arff(df: pd.DataFrame, nombre_relacion: str = "assistments") -> str:
 
 
 def ejecutar_weka_kmeans(arff_path: str, k: int,
-                         max_iter: int = 300, seed: int = 10) -> float | None:
+                         max_iter: int = 300, seed: int = 42) -> float | None:
     if not os.path.exists(WEKA_JAR_PATH):
         raise FileNotFoundError(f"No se encontró weka.jar en: {WEKA_JAR_PATH}")
     java_exe = JAVA_EXE_PATH if os.path.exists(JAVA_EXE_PATH) else "java"
@@ -129,19 +124,34 @@ def prueba1_weka():
         print(f"[!] weka.jar no encontrado en: {WEKA_JAR_PATH}")
         return []
 
+    conn = psycopg2.connect(
+        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+
     total_ejecuciones = len(TAMANOS) * len(K_VALORES)
     n_ejecucion = 0
 
     for tamano in TAMANOS:
         print(f"\n{'─' * 60}")
-        print(f"[+] Descargando muestra real de {tamano:,} filas...")
+        print(f"[+] Preparando muestra de {tamano:,} filas (ORDER BY random — no se mide)...")
+        try:
+            # Crear tabla temporal (NO se cronometra)
+            nombre_tmp = crear_tabla_muestra(cur, conn, tamano, TODAS_LAS_COLUMNAS)
+            print(f"[✓] Tabla temporal lista: {nombre_tmp}")
+        except Exception as e:
+            print(f"[!] Error preparando muestra: {e}")
+            continue
+
+        # === MEDICIÓN: leer desde tabla temp (misma condición que extensión) ===
         try:
             t0_desc = time.perf_counter()
-            df = obtener_muestra_df(tamano, TODAS_LAS_COLUMNAS)
+            df = pd.read_sql(f'SELECT * FROM {nombre_tmp}', conn)
             t_descarga = time.perf_counter() - t0_desc
-            print(f"[✓] Descarga BD: {t_descarga:.4f} s")
         except Exception as e:
-            print(f"[!] Error: {e}")
+            print(f"[!] Error leyendo muestra: {e}")
             continue
 
         # Tiempo de escritura ARFF (transferencia a disco para Weka)
@@ -151,8 +161,8 @@ def prueba1_weka():
             arff_path = f.name
             f.write(df_a_arff(df, f"assistments_{tamano}"))
         t_arff = time.perf_counter() - t0_arff
-        t_carga = t_descarga + t_arff   # descarga BD + escritura disco
-        print(f"[✓] Descarga BD: {t_descarga:.4f}s | ARFF a disco: {t_arff:.4f}s | Carga total: {t_carga:.4f}s")
+        t_carga = t_descarga + t_arff   # descarga tabla temp + escritura ARFF
+        print(f"[✓] Descarga tabla temp: {t_descarga:.4f}s | ARFF a disco: {t_arff:.4f}s | Carga total: {t_carga:.4f}s")
 
         for k in K_VALORES:
             n_ejecucion += 1
@@ -170,7 +180,7 @@ def prueba1_weka():
                 "num_atributos":       len(TODAS_LAS_COLUMNAS),
                 "tiempo_carga_s":      round(t_carga, 6),
                 "tiempo_kmeans_s":     round(tiempo_weka, 6),
-                "tiempo_total_s":      round(tiempo_weka, 6),
+                "tiempo_total_s":      round(t_carga + tiempo_weka, 6),
                 "tiempo_respuesta_s":  round(t_respuesta, 6),
             })
 
@@ -180,6 +190,9 @@ def prueba1_weka():
         pd.DataFrame(resultados).to_csv(
             "results/assistments/prueba1_weka.csv", index=False, encoding="utf-8")
         print("\n[✓] Guardado: results/assistments/prueba1_weka.csv")
+
+    cur.close()
+    conn.close()
     return resultados
 
 
@@ -198,15 +211,28 @@ def prueba2_weka():
         print(f"[!] weka.jar no encontrado en: {WEKA_JAR_PATH}")
         return []
 
-    print(f"\n[+] Descargando muestra fija de {N_PRUEBA2:,} filas reales...")
+    conn = psycopg2.connect(
+        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    # Crear tabla temporal fija (NO se cronometra)
+    print(f"\n[+] Preparando muestra fija de {N_PRUEBA2:,} filas (no se mide)...")
     try:
-        t0_desc_p2 = time.perf_counter()
-        df_completo = obtener_muestra_df(N_PRUEBA2, TODAS_LAS_COLUMNAS)
-        t_descarga_p2 = time.perf_counter() - t0_desc_p2
-        print(f"[✓] Descarga BD: {t_descarga_p2:.4f} s")
+        nombre_tmp = crear_tabla_muestra(cur, conn, N_PRUEBA2, TODAS_LAS_COLUMNAS)
+        print(f"[✓] Tabla temporal lista: {nombre_tmp}")
     except Exception as e:
         print(f"[!] Error: {e}")
+        conn.close()
         return []
+
+    # Leer de tabla temp (se mide una vez) y reutilizar para todos los subconjuntos
+    t0_desc_p2 = time.perf_counter()
+    df_completo = pd.read_sql(f'SELECT * FROM {nombre_tmp}', conn)
+    t_descarga_p2 = time.perf_counter() - t0_desc_p2
+    print(f"[✓] Descarga tabla temp: {t_descarga_p2:.4f} s")
 
     total_ejecuciones = len(SUBCONJUNTOS_ATRIBUTOS) * len(K_VALORES)
     n_ejecucion = 0
@@ -240,7 +266,7 @@ def prueba2_weka():
                 "num_atributos":       n_attrs,
                 "tiempo_carga_s":      round(t_carga, 6),
                 "tiempo_kmeans_s":     round(tiempo_weka, 6),
-                "tiempo_total_s":      round(tiempo_weka, 6),
+                "tiempo_total_s":      round(t_carga + tiempo_weka, 6),
                 "tiempo_respuesta_s":  round(t_respuesta, 6),
             })
 
@@ -250,6 +276,9 @@ def prueba2_weka():
         pd.DataFrame(resultados).to_csv(
             "results/assistments/prueba2_weka.csv", index=False, encoding="utf-8")
         print("\n[✓] Guardado: results/assistments/prueba2_weka.csv")
+
+    cur.close()
+    conn.close()
     return resultados
 
 

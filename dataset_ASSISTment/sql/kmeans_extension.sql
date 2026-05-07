@@ -1,19 +1,27 @@
 -- =============================================================================
--- EXTENSIÃ“N K-MEANS PARA POSTGRESQL (Arquitectura Medianamente Acoplada)
--- Replica: Vallejo-Cabrera et al., Rev. Fac. Ing., Vol. 34, No. 74 (2025)
+-- EXTENSIÓN K-MEANS PARA POSTGRESQL — ARQUITECTURA MEDIANAMENTE ACOPLADA
+-- Réplica de: Vallejo-Cabrera, Timarán-Pereira, Chaves-Torres
+-- "Integration of the K-means algorithm into PostgreSQL through PL/Python
+--  extensions: a moderately coupled architecture"
+-- Rev. Fac. Ing., Vol. 34, No. 74 (2025).
 -- DOI: 10.19053/01211129.v34.n74.2025.20737
 --
--- InstalaciÃ³n:
---   psql -U postgres -d wine_quality -f kmeans_extension.sql
+-- Esta implementación sigue fielmente las funciones descritas en el paper
+-- (Tablas 2, 3 y 4): cada función persiste sus resultados en una tabla
+-- auxiliar dentro del esquema `clustering`, tal como especifica el paper.
+--
+-- Instalación:
+--   psql -U postgres -d <basededatos> -f kmeans_extension.sql
 -- =============================================================================
 
 CREATE SCHEMA IF NOT EXISTS clustering;
 
+
 -- =============================================================================
--- 1. load_table_py
--- Lee la tabla fuente directamente a memoria (GD). Sin archivos temporales
--- ni tablas intermedias: los datos nunca salen de PostgreSQL.
--- Para persistir cl_data llama a save_data_py() después.
+-- 1. load_table_py  (Tabla 2 del paper)
+-- "It loads the records from an existing PostgreSQL table into the
+--  extension's working environment. It stores the data in the temporary
+--  table cl_data."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.load_table_py(
     source_table TEXT,
@@ -22,78 +30,49 @@ CREATE OR REPLACE FUNCTION clustering.load_table_py(
 RETURNS TEXT
 LANGUAGE plpython3u
 AS $func$
-import sys, json
-_usp = r'C:\python_packages'
-if _usp not in sys.path:
-    sys.path.insert(0, _usp)
-import numpy as np
+import json
 
-col_clause = ", ".join(f'"{c}"' for c in columns) if columns else "*"
-rows = plpy.execute(f"SELECT {col_clause} FROM {source_table}")
-if not rows:
-    return json.dumps({"ok": False, "error": "La tabla origen esta vacia"})
+# Determinar columnas a copiar
+if columns:
+    col_clause = ", ".join(f'"{c}"' for c in columns)
+    col_names  = list(columns)
+else:
+    info = plpy.execute(f"""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = '{source_table.split('.')[-1]}'
+        ORDER BY ordinal_position
+    """)
+    if not info:
+        return json.dumps({"ok": False, "error": f"Tabla {source_table} no encontrada"})
+    col_names  = [r["column_name"] for r in info]
+    col_clause = ", ".join(f'"{c}"' for c in col_names)
 
-col_names = list(rows[0].keys())
-data = np.array(
-    [[float(r[c]) if r[c] is not None else 0.0 for c in col_names] for r in rows],
-    dtype=np.float64
-)
-
-# Todo queda en memoria dentro de PostgreSQL — sin disco, sin red
-GD["cl_data_matrix"] = data
-GD["cl_data_cols"]   = col_names
-
-return json.dumps({
-    "ok": True,
-    "rows": int(data.shape[0]),
-    "columns": col_names,
-    "message": f"Datos cargados en memoria desde '{source_table}'"
-})
-$func$;
-
-
--- =============================================================================
--- 1b. save_data_py  (opcional — solo para producción)
--- Persiste cl_data_matrix de GD a la tabla clustering.cl_data
--- para que el usuario pueda consultarla con SQL.
--- =============================================================================
-CREATE OR REPLACE FUNCTION clustering.save_data_py()
-RETURNS TEXT
-LANGUAGE plpython3u
-AS $func$
-import sys, json
-_usp = r'C:\python_packages'
-if _usp not in sys.path:
-    sys.path.insert(0, _usp)
-
-if "cl_data_matrix" not in GD:
-    return json.dumps({"ok": False, "error": "No hay datos en memoria. Ejecuta load_table_py primero."})
-
-data      = GD["cl_data_matrix"]
-col_names = GD["cl_data_cols"]
-
+# Crear tabla cl_data con la misma estructura (m × n)
 plpy.execute("DROP TABLE IF EXISTS clustering.cl_data")
 col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in col_names)
 plpy.execute(f"CREATE TABLE clustering.cl_data ({col_defs})")
 
-vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(col_names))])
-plan = plpy.prepare(
-    f"INSERT INTO clustering.cl_data VALUES ({vals_clause})",
-    ["DOUBLE PRECISION"] * len(col_names)
-)
-for row in data.tolist():
-    plpy.execute(plan, row)
+# Transferir los registros desde la tabla origen a cl_data
+plpy.execute(f"""
+    INSERT INTO clustering.cl_data ({col_clause})
+    SELECT {col_clause} FROM {source_table}
+""")
 
+count = plpy.execute("SELECT COUNT(*) AS n FROM clustering.cl_data")[0]["n"]
 return json.dumps({
     "ok": True,
-    "rows": int(data.shape[0]),
-    "message": "Datos persistidos en clustering.cl_data"
+    "rows": int(count),
+    "columns": col_names,
+    "message": f"Datos cargados en clustering.cl_data desde '{source_table}'"
 })
 $func$;
 
 
 -- =============================================================================
--- 2. load_file_py
+-- 2. load_file_py  (Tabla 2 del paper)
+-- "It enables data ingestion from an external CSV file, transferring the
+--  data into the working environment. It stores the data in cl_data."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.load_file_py(
     file_path TEXT,
@@ -134,9 +113,13 @@ $func$;
 
 
 -- =============================================================================
--- 3. preprocessing_py
--- Normaliza en memoria (GD). Sin archivos temporales ni tablas intermedias.
--- Para persistir cl_data_pre llama a save_preprocessed_py() después.
+-- 3. preprocessing_py  (Tabla 2 del paper)
+-- "Internally, it applies normalization. It stores the result in the
+--  temporary table cl_data_pre."
+--
+-- Lee de cl_data, normaliza con MinMaxScaler de sklearn, y persiste en
+-- cl_data_pre. Las variables categóricas se binarizan (one-hot) si se
+-- indican; en este dataset todas las variables son numéricas.
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.preprocessing_py(
     numeric_cols     TEXT[] DEFAULT NULL,
@@ -150,84 +133,67 @@ _usp = r'C:\python_packages'
 if _usp not in sys.path:
     sys.path.insert(0, _usp)
 import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 
-if "cl_data_matrix" not in GD:
-    return json.dumps({"ok": False, "error": "No hay datos en memoria. Ejecuta load_table_py primero."})
+# Leer cl_data
+rows = plpy.execute("SELECT * FROM clustering.cl_data")
+if not rows:
+    return json.dumps({"ok": False, "error": "clustering.cl_data esta vacia. Ejecuta load_table_py primero."})
 
-X         = GD["cl_data_matrix"].copy()
-col_names = GD["cl_data_cols"]
+col_names = list(rows[0].keys())
+df = pd.DataFrame([dict(r) for r in rows], columns=col_names)
 
+# Determinar columnas numéricas y categóricas
 num_cols = list(numeric_cols) if numeric_cols else col_names
 cat_cols = list(categorical_cols) if categorical_cols else []
 num_cols = [c for c in num_cols if c not in cat_cols]
 
-# Normalización Min-Max con numpy — todo en memoria dentro de PostgreSQL
-col_idx = {c: i for i, c in enumerate(col_names)}
-num_idx = [col_idx[c] for c in num_cols]
-X_num = X[:, num_idx]
-mins = X_num.min(axis=0)
-maxs = X_num.max(axis=0)
-rngs = np.where(maxs - mins == 0, 1.0, maxs - mins)
-X[:, num_idx] = (X_num - mins) / rngs
+# Binarización de categóricas (si las hay)
+if cat_cols:
+    df = pd.get_dummies(df, columns=cat_cols, dtype=float)
 
-final_cols = col_names
-GD["cl_data_pre_matrix"] = X
-GD["cl_data_pre_cols"]   = final_cols
+# Normalización Min-Max de las numéricas
+scaler = MinMaxScaler()
+df[num_cols] = scaler.fit_transform(df[num_cols].astype(float))
 
-return json.dumps({
-    "ok": True,
-    "rows": int(X.shape[0]),
-    "original_cols": len(col_names),
-    "processed_cols": len(final_cols),
-    "numeric_normalized": num_cols,
-    "categorical_encoded": cat_cols,
-    "message": "Preprocesamiento completado en memoria"
-})
-$func$;
+final_cols = list(df.columns)
+X_norm     = df.values.astype(np.float64)
 
-
--- =============================================================================
--- 3b. save_preprocessed_py  (opcional — solo para producción)
--- Persiste cl_data_pre_matrix de GD a la tabla clustering.cl_data_pre
--- para que el usuario pueda consultarla con SQL.
--- =============================================================================
-CREATE OR REPLACE FUNCTION clustering.save_preprocessed_py()
-RETURNS TEXT
-LANGUAGE plpython3u
-AS $func$
-import sys, json
-_usp = r'C:\python_packages'
-if _usp not in sys.path:
-    sys.path.insert(0, _usp)
-
-if "cl_data_pre_matrix" not in GD:
-    return json.dumps({"ok": False, "error": "No hay datos preprocesados en memoria. Ejecuta preprocessing_py primero."})
-
-X         = GD["cl_data_pre_matrix"]
-col_names = GD["cl_data_pre_cols"]
-
+# Persistir en cl_data_pre (estructura m × p, p ≥ n por la binarización)
 plpy.execute("DROP TABLE IF EXISTS clustering.cl_data_pre")
-col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in col_names)
+col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in final_cols)
 plpy.execute(f"CREATE TABLE clustering.cl_data_pre ({col_defs})")
 
-vals_clause = ", ".join(["$" + str(i + 1) for i in range(len(col_names))])
-plan = plpy.prepare(
-    f"INSERT INTO clustering.cl_data_pre VALUES ({vals_clause})",
-    ["DOUBLE PRECISION"] * len(col_names)
-)
-for row in X.tolist():
-    plpy.execute(plan, row)
+# Inserción por lotes (1000 filas por INSERT) para 1M filas
+BATCH = 1000
+n_rows, n_cols = X_norm.shape
+for start in range(0, n_rows, BATCH):
+    chunk = X_norm[start:start + BATCH]
+    values = ", ".join(
+        "(" + ",".join(repr(float(v)) for v in row) + ")"
+        for row in chunk
+    )
+    plpy.execute(f"INSERT INTO clustering.cl_data_pre VALUES {values}")
 
 return json.dumps({
     "ok": True,
-    "rows": int(X.shape[0]),
-    "message": "Datos preprocesados persistidos en clustering.cl_data_pre"
+    "rows": int(n_rows),
+    "original_cols": len(col_names),
+    "processed_cols": int(n_cols),
+    "numeric_normalized": num_cols,
+    "categorical_encoded": cat_cols,
+    "message": "Preprocesamiento completado en clustering.cl_data_pre"
 })
 $func$;
 
 
 -- =============================================================================
--- 4. kmeans_py
+-- 4. kmeans_py  (Tabla 3 del paper)
+-- "Central function that executes the k-means algorithm using the
+--  preprocessed data stored in cl_data_pre, with parameters (K, number of
+--  iterations, seed, etc.) defined by the user. The trained model is
+--  serialized and externally persisted."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.kmeans_py(
     k          INTEGER,
@@ -238,25 +204,22 @@ CREATE OR REPLACE FUNCTION clustering.kmeans_py(
 RETURNS TEXT
 LANGUAGE plpython3u
 AS $func$
-import sys, json, pickle, time
+import sys, json, pickle, time, os
 _usp = r'C:\python_packages'
 if _usp not in sys.path:
     sys.path.insert(0, _usp)
 import numpy as np
 from sklearn.cluster import KMeans
 
-# Leer de GD si preprocessing_py ya normalizó los datos en esta sesión;
-# si no (llamada directa), leer desde la tabla cl_data_pre
-if "cl_data_pre_matrix" in GD:
-    X         = GD["cl_data_pre_matrix"]
-    col_names = GD["cl_data_pre_cols"]
-else:
-    rows = plpy.execute("SELECT * FROM clustering.cl_data_pre")
-    if not rows:
-        return json.dumps({"ok": False, "error": "clustering.cl_data_pre esta vacia. Ejecuta preprocessing_py primero."})
-    col_names = list(rows[0].keys())
-    X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
+# Leer datos preprocesados desde cl_data_pre (como especifica el paper)
+rows = plpy.execute("SELECT * FROM clustering.cl_data_pre")
+if not rows:
+    return json.dumps({"ok": False, "error": "clustering.cl_data_pre esta vacia. Ejecuta preprocessing_py primero."})
 
+col_names = list(rows[0].keys())
+X = np.array([[r[c] for c in col_names] for r in rows], dtype=np.float64)
+
+# Ejecución k-means con los parámetros del usuario
 t0 = time.perf_counter()
 model = KMeans(
     n_clusters=k,
@@ -268,11 +231,12 @@ model = KMeans(
 model.fit(X)
 elapsed = time.perf_counter() - t0
 
-import os
+# Serialización externa del modelo (como especifica el paper)
 os.makedirs(r'C:\Temp', exist_ok=True)
 with open(model_path, "wb") as f:
     pickle.dump({"model": model, "columns": col_names}, f)
 
+# Persistir labels y modelo en GD para que las demás funciones los reutilicen
 GD["kmeans_labels"] = model.labels_.tolist()
 GD["kmeans_model"]  = model
 GD["kmeans_cols"]   = col_names
@@ -290,7 +254,10 @@ $func$;
 
 
 -- =============================================================================
--- 5. result_py
+-- 5. result_py  (Tabla 3 del paper)
+-- "It stores the data with the cluster assignments in the table cl_result.
+--  Its structure is m × (n+1), where the additional column corresponds to
+--  the cluster label."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.result_py()
 RETURNS TEXT
@@ -301,12 +268,13 @@ import json
 if "kmeans_labels" not in GD:
     return json.dumps({"ok": False, "error": "No hay modelo en memoria. Ejecuta kmeans_py primero."})
 
-labels    = GD["kmeans_labels"]
-col_names = GD["kmeans_cols"]
+labels = GD["kmeans_labels"]
 
-rows = plpy.execute("SELECT * FROM clustering.cl_data")
+rows = plpy.execute("SELECT * FROM clustering.cl_data_pre")
 if not rows:
-    return json.dumps({"ok": False, "error": "clustering.cl_data esta vacia"})
+    return json.dumps({"ok": False, "error": "clustering.cl_data_pre esta vacia"})
+
+col_names = list(rows[0].keys())
 
 plpy.execute("DROP TABLE IF EXISTS clustering.cl_result")
 col_defs = ", ".join(f'"{c}" DOUBLE PRECISION' for c in col_names) + ', "cluster_label" INTEGER'
@@ -329,7 +297,9 @@ $func$;
 
 
 -- =============================================================================
--- 6. centroids_py
+-- 6. centroids_py  (Tabla 3 del paper)
+-- "It displays the final centroids of the k-means model. It stores the
+--  centroids in the cl_centroids table. Its structure is k × (n+1)."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.centroids_py()
 RETURNS TEXT
@@ -365,7 +335,10 @@ $func$;
 
 
 -- =============================================================================
--- 7. summary_py
+-- 7. summary_py  (Tabla 3 del paper)
+-- "It provides a statistical summary of the clustering by counting the
+--  number of data points in each cluster. It stores the summary in
+--  cl_summary (k × 3): cluster label, total count, percentage."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.summary_py()
 RETURNS TEXT
@@ -400,7 +373,9 @@ $func$;
 
 
 -- =============================================================================
--- 8. inertia_py
+-- 8. inertia_py  (Tabla 4 del paper)
+-- "It retrieves and displays the total inertia (Within-Cluster Sum of
+--  Squares - WCSS) and the number of iterations used in kmeans_py."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.inertia_py()
 RETURNS TEXT
@@ -422,7 +397,10 @@ $func$;
 
 
 -- =============================================================================
--- 9. elbow_py
+-- 9. elbow_py  (Tabla 4 del paper)
+-- "Repeatedly executes the k-means algorithm varying the value of K within
+--  a defined range. It stores the results in cl_elbow (q × 2): K value,
+--  total inertia."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.elbow_py(
     k_min    INTEGER DEFAULT 2,
@@ -452,7 +430,7 @@ plpy.execute("CREATE TABLE clustering.cl_elbow (k INTEGER, inertia DOUBLE PRECIS
 
 results = []
 for k in range(k_min, k_max + 1):
-    model = KMeans(n_clusters=k, init="k-means++", n_init=10, max_iter=max_iter, random_state=seed)
+    model = KMeans(n_clusters=k, init="k-means++", n_init=1, max_iter=max_iter, random_state=seed)
     model.fit(X)
     inertia = float(model.inertia_)
     plpy.execute(f"INSERT INTO clustering.cl_elbow VALUES ({k}, {inertia})")
@@ -464,7 +442,9 @@ $func$;
 
 
 -- =============================================================================
--- 10. silhouette_py
+-- 10. silhouette_py  (Tabla 4 del paper)
+-- "It calculates the Silhouette Coefficient for various values of K. It
+--  stores the coefficients in cl_silhouette (q × 2)."
 -- =============================================================================
 CREATE OR REPLACE FUNCTION clustering.silhouette_py(
     k_min    INTEGER DEFAULT 2,
@@ -495,7 +475,7 @@ plpy.execute("CREATE TABLE clustering.cl_silhouette (k INTEGER, silhouette_avg D
 
 results = []
 for k in range(k_min, k_max + 1):
-    model  = KMeans(n_clusters=k, init="k-means++", n_init=10, max_iter=max_iter, random_state=seed)
+    model  = KMeans(n_clusters=k, init="k-means++", n_init=1, max_iter=max_iter, random_state=seed)
     labels = model.fit_predict(X)
     score  = float(silhouette_score(X, labels, sample_size=min(5000, len(X)), random_state=seed))
     plpy.execute(f"INSERT INTO clustering.cl_silhouette VALUES ({k}, {score})")
@@ -504,4 +484,3 @@ for k in range(k_min, k_max + 1):
 return json.dumps({"ok": True, "k_range": [k_min, k_max], "results": results,
                    "message": "Coeficientes de silueta en clustering.cl_silhouette"})
 $func$;
-

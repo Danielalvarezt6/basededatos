@@ -126,12 +126,14 @@ def ejecutar_benchmark():
                     "registros":           N_REGISTROS,
                     "num_grupos":          k,
                     "num_atributos":       n_cols,
-                    "tiempo_carga_s":      round(t_carga, 6),
-                    "tiempo_kmeans_s":     round(t_kmeans, 6),
-                    "tiempo_total_s":      round(t_total, 6),
-                    "tiempo_respuesta_s":  round(t_respuesta, 6),
-                    "iteraciones":         payload["iterations"],
-                    "inercia_wcss":        round(payload["inertia"], 4),
+                    "tiempo_carga_s":          round(t_carga, 6),
+                    # P4: tiempo_kmeans_s = llamada SQL completa (equivalente a sklearn/Weka)
+                    "tiempo_kmeans_s":         round(t_total, 6),
+                    "tiempo_kmeans_interno_s": round(t_kmeans, 6),
+                    "tiempo_total_s":          round(t_total, 6),
+                    "tiempo_respuesta_s":      round(t_respuesta, 6),
+                    "iteraciones":             payload["iterations"],
+                    "inercia_wcss":            round(payload["inertia"], 4),
                 })
 
             except Exception as e:

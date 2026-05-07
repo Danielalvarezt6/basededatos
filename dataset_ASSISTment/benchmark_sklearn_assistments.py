@@ -50,21 +50,25 @@ SUBCONJUNTOS_ATRIBUTOS = {n: TODAS_LAS_COLUMNAS[:n] for n in [3, 5, 7, 9, 11]}
 # =====================================================
 # UTILIDADES
 # =====================================================
-def obtener_muestra_df(tamano: int, cols: list, semilla: int = 42) -> pd.DataFrame:
-    conn = psycopg2.connect(
-        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
-        host=DB_HOST, port=DB_PORT
-    )
+def crear_tabla_muestra(cur, conn, tamano: int, cols: list) -> str:
+    """
+    Materializa N filas aleatorias en una tabla temporal (no se cronometra).
+    Usa setseed(0.42) — IDÉNTICO a la extensión y Weka (corrección P1).
+    Devuelve el nombre de la tabla para que el benchmark la lea después.
+    """
+    nombre = f"_muestra_{tamano}"
     col_clause = ", ".join(f'"{c}"' for c in cols)
-    with conn.cursor() as cur:
-        cur.execute(f"SELECT setseed({semilla / 10**9:.6f})")
-        conn.commit()
-    df = pd.read_sql(
-        f"SELECT {col_clause} FROM {TABLA_REAL} ORDER BY random() LIMIT {tamano}",
-        conn
-    )
-    conn.close()
-    return df
+    # Semilla idéntica a la extensión: setseed(0.42) — NO setseed(0.000000042)
+    cur.execute("SELECT setseed(0.42)")
+    cur.execute(f"""
+        DROP TABLE IF EXISTS {nombre};
+        CREATE TEMP TABLE {nombre} AS
+        SELECT {col_clause}
+        FROM {TABLA_REAL}
+        ORDER BY random()
+        LIMIT {tamano}
+    """)
+    return nombre
 
 
 def normalizar(df: pd.DataFrame) -> np.ndarray:
@@ -91,26 +95,41 @@ def prueba1_sklearn():
     print("Dataset: ASSISTments — 6.1M interacciones reales")
     print("=" * 70)
 
+    conn = psycopg2.connect(
+        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+
     total_ejecuciones = len(TAMANOS) * len(K_VALORES)
     n_ejecucion = 0
 
     for tamano in TAMANOS:
         print(f"\n{'─' * 60}")
-        print(f"[+] Descargando muestra real de {tamano:,} filas...")
+        print(f"[+] Preparando muestra de {tamano:,} filas (ORDER BY random — no se mide)...")
         try:
-            t0_descarga = time.perf_counter()
-            df = obtener_muestra_df(tamano, TODAS_LAS_COLUMNAS)
-            t_descarga = time.perf_counter() - t0_descarga
+            # Crear tabla temporal con misma semilla que la extensión — NO se cronometra
+            nombre_tmp = crear_tabla_muestra(cur, conn, tamano, TODAS_LAS_COLUMNAS)
+            print(f"[✓] Tabla temporal lista: {nombre_tmp}")
         except Exception as e:
-            print(f"[!] Error: {e}")
+            print(f"[!] Error preparando muestra: {e}")
             continue
 
-        print(f"[+] Normalizando...")
+        # === MEDICIÓN: leer desde tabla temp + normalizar (misma condición que extensión) ===
+        try:
+            t0_descarga = time.perf_counter()
+            df = pd.read_sql(f'SELECT * FROM {nombre_tmp}', conn)
+            t_descarga = time.perf_counter() - t0_descarga
+        except Exception as e:
+            print(f"[!] Error leyendo muestra: {e}")
+            continue
+
         t0_norm = time.perf_counter()
         X = normalizar(df)
         t_norm = time.perf_counter() - t0_norm
         t_carga = t_descarga + t_norm
-        print(f"[✓] Descarga BD: {t_descarga:.4f}s | Normalización: {t_norm:.4f}s | Total carga: {t_carga:.4f}s")
+        print(f"[✓] Descarga tabla temp: {t_descarga:.4f}s | Normalización: {t_norm:.4f}s | Total carga: {t_carga:.4f}s")
 
         for k in K_VALORES:
             n_ejecucion += 1
@@ -139,6 +158,9 @@ def prueba1_sklearn():
         pd.DataFrame(resultados).to_csv(
             "results/assistments/prueba1_sklearn.csv", index=False, encoding="utf-8")
         print("\n[✓] Guardado: results/assistments/prueba1_sklearn.csv")
+
+    cur.close()
+    conn.close()
     return resultados
 
 
@@ -153,15 +175,28 @@ def prueba2_sklearn():
     print(f"PRUEBA 2 — sklearn KMeans: variando atributos | {N_PRUEBA2:,} filas reales")
     print("=" * 70)
 
-    print(f"\n[+] Descargando muestra fija de {N_PRUEBA2:,} filas reales...")
+    conn = psycopg2.connect(
+        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    # Crear tabla temporal fija (NO se cronometra)
+    print(f"\n[+] Preparando muestra fija de {N_PRUEBA2:,} filas (no se mide)...")
     try:
-        t0_desc = time.perf_counter()
-        df_completo = obtener_muestra_df(N_PRUEBA2, TODAS_LAS_COLUMNAS)
-        t_descarga_p2 = time.perf_counter() - t0_desc
-        print(f"[✓] Descarga BD: {t_descarga_p2:.4f} s")
+        nombre_tmp = crear_tabla_muestra(cur, conn, N_PRUEBA2, TODAS_LAS_COLUMNAS)
+        print(f"[✓] Tabla temporal lista: {nombre_tmp}")
     except Exception as e:
         print(f"[!] Error: {e}")
+        conn.close()
         return []
+
+    # Leer de tabla temp (se mide una vez) y reutilizar para todos los subconjuntos
+    t0_desc = time.perf_counter()
+    df_completo = pd.read_sql(f'SELECT * FROM {nombre_tmp}', conn)
+    t_descarga_p2 = time.perf_counter() - t0_desc
+    print(f"[✓] Descarga tabla temp: {t_descarga_p2:.4f} s")
 
     total_ejecuciones = len(SUBCONJUNTOS_ATRIBUTOS) * len(K_VALORES)
     n_ejecucion = 0
@@ -172,7 +207,6 @@ def prueba2_sklearn():
         t0_norm = time.perf_counter()
         X = normalizar(df_completo[cols])
         t_norm = time.perf_counter() - t0_norm
-        # La descarga ya se hizo una vez; se distribuye igual para todos los subconjuntos
         t_carga = t_descarga_p2 + t_norm
         print(f"[✓] Normalización: {t_norm:.4f}s | Carga total: {t_carga:.4f}s")
 
@@ -203,6 +237,9 @@ def prueba2_sklearn():
         pd.DataFrame(resultados).to_csv(
             "results/assistments/prueba2_sklearn.csv", index=False, encoding="utf-8")
         print("\n[✓] Guardado: results/assistments/prueba2_sklearn.csv")
+
+    cur.close()
+    conn.close()
     return resultados
 
 

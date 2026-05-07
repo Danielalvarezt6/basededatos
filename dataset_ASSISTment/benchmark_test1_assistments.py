@@ -51,14 +51,16 @@ COLUMNAS = [
 TAMANOS = [1_000, 2_000, 5_000, 10_000, 21_000, 50_000, 100_000, 500_000, 1_000_000]
 
 
-def crear_muestra_real(cur, tamano: int, semilla: int = 42) -> str:
+def crear_muestra_real(cur, tamano: int) -> str:
     """
     Crea una tabla temporal con 'tamano' filas aleatorias de la tabla real.
+    Usa setseed(0.42) — IDÉNTICO a sklearn y Weka (corrección P1).
     Devuelve el nombre de la tabla temporal.
     """
     nombre = f"_muestra_{tamano}"
     cols   = ", ".join(f'"{c}"' for c in COLUMNAS)
-    cur.execute(f"SELECT setseed({semilla / 10**9:.6f})")
+    # Semilla idéntica entre las tres herramientas para que reciban los mismos datos
+    cur.execute("SELECT setseed(0.42)")
     cur.execute(f"""
         DROP TABLE IF EXISTS {nombre};
         CREATE TEMP TABLE {nombre} AS
@@ -151,11 +153,13 @@ def ejecutar_benchmark():
                     "num_grupos":          k,
                     "num_atributos":       len(COLUMNAS),
                     "tiempo_carga_s":      round(t_carga, 6),
-                    "tiempo_kmeans_s":     round(t_kmeans, 6),
-                    "tiempo_total_s":      round(t_total, 6),
-                    "tiempo_respuesta_s":  round(t_respuesta, 6),
-                    "iteraciones":         payload["iterations"],
-                    "inercia_wcss":        round(payload["inertia"], 4),
+                    # P4: tiempo_kmeans_s = llamada SQL completa (equivalente a sklearn/Weka)
+                    "tiempo_kmeans_s":         round(t_total, 6),
+                    "tiempo_kmeans_interno_s": round(t_kmeans, 6),
+                    "tiempo_total_s":          round(t_total, 6),
+                    "tiempo_respuesta_s":      round(t_respuesta, 6),
+                    "iteraciones":             payload["iterations"],
+                    "inercia_wcss":            round(payload["inertia"], 4),
                 })
 
             except Exception as e:

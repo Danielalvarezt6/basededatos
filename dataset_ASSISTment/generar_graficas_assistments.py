@@ -369,20 +369,23 @@ def tabla_resumen():
     print("Dataset: ASSISTments | Extensión PL/Python · Weka · Python sklearn")
     print("=" * 85)
 
+    # P8: forzar tiempo_respuesta_s — único tiempo verdaderamente equivalente entre las 3 herramientas
+    COL_COMPARACION = "tiempo_respuesta_s"
+
     # ── Tabla 1: Prueba 1, k=5 ──
-    csvs_p1 = [(h["etiqueta"], cargar_csv(h["csv_p1"]), h["col_tiempo"]) for h in HERRAMIENTAS]
-    tamanos = sorted({s for _, df, _ in csvs_p1 if df is not None for s in df["registros"].unique()})
+    csvs_p1 = [(h["etiqueta"], cargar_csv(h["csv_p1"])) for h in HERRAMIENTAS]
+    tamanos = sorted({s for _, df in csvs_p1 if df is not None for s in df["registros"].unique()})
 
     if tamanos:
-        print("\n--- Prueba 1: Tiempo por número de registros (k = 5 grupos) ---")
+        print(f"\n--- Prueba 1: {COL_COMPARACION} por número de registros (k = 5 grupos) ---")
         filas = []
         for s in tamanos:
             fila = {"Registros": etiqueta_registros(s)}
-            for nombre, df, col_t in csvs_p1:
+            for nombre, df in csvs_p1:
                 if df is None:
                     fila[nombre + " (s)"] = "—"
                     continue
-                col_usar = col_t if col_t in df.columns else "tiempo_total_s"
+                col_usar = COL_COMPARACION if COL_COMPARACION in df.columns else "tiempo_total_s"
                 sub = df[(df["registros"] == s) & (df["num_grupos"] == 5)]
                 fila[nombre + " (s)"] = round(sub[col_usar].mean(), 4) if len(sub) else "—"
             filas.append(fila)
@@ -392,19 +395,19 @@ def tabla_resumen():
                     encoding="utf-8")
 
     # ── Tabla 2: Prueba 2, k=5 ──
-    csvs_p2 = [(h["etiqueta"], cargar_csv(h["csv_p2"]), h["col_tiempo"]) for h in HERRAMIENTAS]
-    n_attrs = sorted({a for _, df, _ in csvs_p2 if df is not None for a in df["num_atributos"].unique()})
+    csvs_p2 = [(h["etiqueta"], cargar_csv(h["csv_p2"])) for h in HERRAMIENTAS]
+    n_attrs = sorted({a for _, df in csvs_p2 if df is not None for a in df["num_atributos"].unique()})
 
     if n_attrs:
-        print("\n--- Prueba 2: Tiempo por número de atributos (k = 5 grupos) ---")
+        print(f"\n--- Prueba 2: {COL_COMPARACION} por número de atributos (k = 5 grupos) ---")
         filas2 = []
         for a in n_attrs:
             fila = {"Atributos": a}
-            for nombre, df, col_t in csvs_p2:
+            for nombre, df in csvs_p2:
                 if df is None:
                     fila[nombre + " (s)"] = "—"
                     continue
-                col_usar = col_t if col_t in df.columns else "tiempo_total_s"
+                col_usar = COL_COMPARACION if COL_COMPARACION in df.columns else "tiempo_total_s"
                 sub = df[(df["num_atributos"] == a) & (df["num_grupos"] == 5)]
                 fila[nombre + " (s)"] = round(sub[col_usar].mean(), 4) if len(sub) else "—"
             filas2.append(fila)
