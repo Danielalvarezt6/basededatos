@@ -98,15 +98,12 @@ def prueba1_sklearn():
         print(f"\n{'─' * 60}")
         print(f"[+] Descargando muestra real de {tamano:,} filas...")
         try:
+            t0_descarga = time.perf_counter()
             df = obtener_muestra_df(tamano, TODAS_LAS_COLUMNAS)
+            t_descarga = time.perf_counter() - t0_descarga
         except Exception as e:
             print(f"[!] Error: {e}")
             continue
-
-        # Tiempo de descarga desde PostgreSQL (transferencia de red)
-        t0_descarga = time.perf_counter()
-        df = obtener_muestra_df(tamano, TODAS_LAS_COLUMNAS)
-        t_descarga = time.perf_counter() - t0_descarga
 
         print(f"[+] Normalizando...")
         t0_norm = time.perf_counter()
