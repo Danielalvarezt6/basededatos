@@ -8,7 +8,7 @@ Trabajo presentado para presentar en un cartel en el **Congreso Estatal de Cienc
 > *Integration of the K-means Algorithm into PostgreSQL through PL/Python Extensions:
 > A Moderately Coupled Architecture.*
 > Revista Facultad de Ingeniería (Rev. Fac. Ing.), Vol. 34, No. 74.
-> DOI: [10.19053/01211129.v34.n74.2025.20737](https://doi.org/10.19053/01211129.v34.n74.2025.20737)
+> (https://repositorio.uptc.edu.co/handle/001/21620)
 
 ---
 
