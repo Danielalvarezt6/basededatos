@@ -68,9 +68,9 @@ Para que las tres herramientas compitan en igualdad de condiciones:
 2. **Mismo algoritmo:** las tres usan k-means++ con `n_init=1`, `max_iter=300`, `random_state=42`.
 3. **Métricas desagregadas:**
    - `tiempo_carga_s` — desde la tabla temporal hasta dejar los datos listos para entrenar
-   - `tiempo_kmeans_s` — solo el `fit()` o equivalente externo
-   - `tiempo_kmeans_interno_s` (solo extensión) — `kmeans_py` aislado de su llamada SQL, comparable al "model construction time" del paper
-   - `tiempo_respuesta_s` — el total que ve el usuario
+   - `tiempo_kmeans_s` — **Weka / sklearn:** tiempo del proceso K-means (llamada externa). **Extensión:** tiempo de la **llamada SQL completa** a `kmeans_py` (incluye overhead del wrapper PL/Python), comparable en espíritu al tiempo medido “desde el cliente” para las otras herramientas.
+   - `tiempo_kmeans_interno_s` (solo extensión) — tiempo del `fit()` dentro de `kmeans_py`; equivale al **“model construction time”** del paper.
+   - `tiempo_respuesta_s` — suma carga + ejecución (métrica principal para comparar las tres herramientas en las tablas resumen del script de gráficas)
 
 ### Dataset
 
@@ -96,6 +96,8 @@ Fuente: [Kaggle skillbuilder-data-2009-2010](https://www.kaggle.com/datasets/nic
 
 ### Resultado 2 — Tiempo del K-Means aislado ("model construction time" del paper)
 
+Valores de la columna **`tiempo_kmeans_interno_s`** en la extensión; para Weka y sklearn coincide con **`tiempo_kmeans_s`** (solo entrenamiento).
+
 | Registros | Extensión PL/Python | Weka | Python sklearn |
 |---|---|---|---|
 | 1K | 0.026 s | 0.35 s | 0.009 s |
@@ -117,39 +119,70 @@ Fuente: [Kaggle skillbuilder-data-2009-2010](https://www.kaggle.com/datasets/nic
 
 ---
 
+## Figuras generadas (`generar_graficas_assistments.py`)
+
+Salida por defecto: **`results/assistments/figuras/`** (PNG, 150 DPI).
+
+| Archivo | Contenido |
+|---------|-----------|
+| `figura1_prueba_registros.png` | Prueba 1: rendimiento variando **número de registros** (las 3 herramientas). |
+| `figura2_prueba_atributos.png` | Prueba 2: rendimiento variando **número de atributos** (100 K filas). |
+| `figura3_tiempo_respuesta_registros.png` | Tiempo de **respuesta total** (`tiempo_respuesta_s`) vs registros. |
+| `figura4_tiempo_respuesta_atributos.png` | Tiempo de **respuesta total** vs atributos. |
+| `figura5_carga_vs_ejecucion.png` | Barras apiladas **carga vs ejecución K-means** por herramienta (*k* = 5; tamaños 10 K, 100 K, 500 K, 1 M). **Los tres paneles comparten la misma escala en el eje Y** para comparación visual directa. |
+| `figura6_tiempo_respuesta.png` | Comparativa global del tiempo de respuesta (paneles registros / atributos). |
+
+Tras cada corrida del pipeline, los scripts también guardan **`tabla_resumen_prueba1.csv`** y **`tabla_resumen_prueba2.csv`** en `results/assistments/` (métrica principal: **`tiempo_respuesta_s`**). Los logs locales pueden guardarse en `results/assistments/logs/` (carpeta ignorada por git).
+
+---
+
+## Documentación adicional (cartel / marco teórico)
+
+| Archivo | Uso |
+|---------|-----|
+| [`docs/documento_cartel.md`](docs/documento_cartel.md) | Borrador estructurado (título, introducción, materiales y métodos, resultados, conclusiones, referencias) para el cartel CECEN. |
+| [`docs/arquitecturas.md`](docs/arquitecturas.md) | Resumen del estado del arte de **Timarán** sobre arquitecturas débil / mediana / fuerte acopladas al SGBD. |
+| [`docs/correciones.md`](docs/correciones.md) | Bitácora técnica de correcciones aplicadas a la metodología de benchmarks (semillas, métricas Weka, comparabilidad de tiempos). |
+
+---
+
 ## Estructura del proyecto
 
 ```
 fuentescartelcecen/
-├── paper.md                                 # Artículo de referencia
+├── paper.md                    # Artículo de referencia (Markdown)
 ├── README.md
-├── correciones.md                           # Bitácora técnica de las correcciones aplicadas
-│
-└── dataset_ASSISTment/
-    │
-    ├── sql/
-    │   └── kmeans_extension.sql             # Extensión PL/Python (10 funciones, fiel al paper)
-    │
-    ├── # ── Carga de datos ─────────────────
-    ├── cargar_assistments_completo.py       # Carga 6.1M filas a PostgreSQL (COPY)
-    │
-    ├── # ── Benchmarks (pipeline principal) ─
-    ├── benchmark_test1_assistments.py       # Extensión: variando registros (1K → 1M)
-    ├── benchmark_test2_assistments.py       # Extensión: variando atributos (3 → 11)
-    ├── benchmark_weka_assistments.py        # Weka: Prueba 1 y Prueba 2
-    ├── benchmark_sklearn_assistments.py     # sklearn: Prueba 1 y Prueba 2
-    ├── generar_graficas_assistments.py      # Genera figuras comparativas
-    │
-    └── results/assistments/
-        ├── prueba1_extension.csv            # Tiempos extensión variando registros
-        ├── prueba1_weka.csv
-        ├── prueba1_sklearn.csv
-        ├── prueba2_extension.csv            # Tiempos variando atributos
-        ├── prueba2_weka.csv
-        ├── prueba2_sklearn.csv
-        ├── tabla_resumen_prueba1.csv
-        ├── tabla_resumen_prueba2.csv
-        └── figuras/                         # PNG comparativos
+├── pyrightconfig.json
+├── data/
+│   ├── README.md               # Cómo obtener dataset.csv (no versionado)
+│   └── dataset.csv             # (local; ignorado por git)
+├── docs/
+│   ├── documento_cartel.md     # Texto estructurado para el cartel CECEN
+│   ├── arquitecturas.md        # Estado del arte (Timarán)
+│   ├── correciones.md          # Revisión técnica de benchmarks
+│   └── diagrama arquitectura medianamente acoplada.png
+├── sql/
+│   └── kmeans_extension.sql    # Extensión PL/Python (10 funciones, fiel al paper)
+├── scripts/
+│   ├── paths.py                # Rutas del repo (RESULTS, FIGURAS, DATA, SQL)
+│   ├── cargar_assistments_completo.py
+│   ├── benchmark_test1_assistments.py
+│   ├── benchmark_test2_assistments.py
+│   ├── benchmark_weka_assistments.py
+│   ├── benchmark_sklearn_assistments.py
+│   └── generar_graficas_assistments.py
+└── results/assistments/
+    ├── prueba1_extension.csv
+    ├── prueba1_weka.csv
+    ├── prueba1_sklearn.csv
+    ├── prueba2_extension.csv
+    ├── prueba2_weka.csv
+    ├── prueba2_sklearn.csv
+    ├── tabla_resumen_prueba1.csv
+    ├── tabla_resumen_prueba2.csv
+    ├── logs/                   # opcional; ignorado por git
+    └── figuras/
+        └── figura*.png
 ```
 
 ---
@@ -220,21 +253,23 @@ pip install --target "C:\python_packages" numpy pandas scikit-learn
 
 > El archivo `dataset.csv` (2.8 GB) no está versionado. Descárgalo desde: <https://www.kaggle.com/datasets/nicolaswattiez/skillbuilder-data-2009-2010>
 
+Ejecuta desde la **raíz del repositorio**:
+
 ```powershell
 # 1. Habilitar la extensión PL/Python e instalar las funciones
-psql -U postgres -d assistments_clustering -f dataset_ASSISTment/sql/kmeans_extension.sql
+psql -U postgres -d assistments_clustering -f sql/kmeans_extension.sql
 
-# 2. Cargar el dataset completo (6.1M filas) a PostgreSQL
-python dataset_ASSISTment/cargar_assistments_completo.py
+# 2. Colocar dataset.csv en data/ (ver data/README.md) y cargar ~6.1M filas a PostgreSQL
+python scripts/cargar_assistments_completo.py
 
-# 3. Correr los benchmarks (las cuatro herramientas)
-python dataset_ASSISTment/benchmark_test1_assistments.py
-python dataset_ASSISTment/benchmark_test2_assistments.py
-python dataset_ASSISTment/benchmark_sklearn_assistments.py
-python dataset_ASSISTment/benchmark_weka_assistments.py
+# 3. Correr los benchmarks (las tres herramientas)
+python scripts/benchmark_test1_assistments.py
+python scripts/benchmark_test2_assistments.py
+python scripts/benchmark_sklearn_assistments.py
+python scripts/benchmark_weka_assistments.py
 
-# 4. Generar todas las figuras y tablas comparativas
-python dataset_ASSISTment/generar_graficas_assistments.py
+# 4. Generar todas las figuras y tablas comparativas (recomendado: mismo Python donde está matplotlib)
+python scripts/generar_graficas_assistments.py
 ```
 
 ---
@@ -256,7 +291,7 @@ Estandarizados entre las tres herramientas para que la comparación sea justa:
 
 ---
 
-## Referencia
+## Referencias principales
 
 ```
 Vallejo-Cabrera, F., Timarán-Pereira, R., Chaves-Torres, A. (2025).
@@ -265,3 +300,5 @@ A Moderately Coupled Architecture.
 Revista Facultad de Ingeniería (Rev. Fac. Ing.), Vol. 34, No. 74.
 DOI: 10.19053/01211129.v34.n74.2025.20737
 ```
+
+Timarán Pereira, R. (2011). Arquitecturas de integración del proceso de descubrimiento de conocimiento con sistemas de gestión de bases de datos: un estado del arte. *Ingeniería y Competitividad*, 3(2), 45–55. DOI: [10.25100/iyc.v3i2.2327](https://doi.org/10.25100/iyc.v3i2.2327)

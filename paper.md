@@ -2,8 +2,6 @@ Revista Facultad de Ingeniería (Rev. Fac. Ing.) Vol. 34, No. 74. L-ISSN: 0121-1
 
 DOI: 10.19053/01211129.v34.n74.2025.20737
 
-![](_page_0_Picture_2.jpeg)
-
 # INTEGRATION OF THE K-MEANS ALGORITHM INTO POSTGRESQL THROUGH PL/PYTHON EXTENSIONS: A MODERATELY COUPLED ARCHITECTURE
 
 Integración del algoritmo K-means en PostgreSQL mediante extensiones en PL/ Python: una arquitectura medianamente acoplada
@@ -21,8 +19,6 @@ Anivar Chaves-Torres <sup>®</sup>
 Ph.D. Universidad de Nariño, Pasto, Colombia. ROR. anivarchaves@udenar.edu.co
 
 Received: 20-06-2025 Accepted: 16-12-2025 Available online: 31-12-2025
-
-![](_page_0_Picture_12.jpeg)
 
 #### **ABSTRACT**
 
@@ -216,8 +212,6 @@ Dependent Variable: Model construction time (measured in seconds).
 
 Results are shown in Figure 1.
 
-![](_page_8_Figure_1.jpeg)
-
 **Figure 1**. Performance comparison varying the number of records and the value of k.
 
 # 3.3.2 Test 2: Performance when Horizontal Dimensionality Varies
@@ -240,8 +234,6 @@ The goal was to determine the scalability of the K-means algorithm implemented i
 - ♦ Number of attributes: Gradually varied from 3 to 11 processed attributes.
 
 Results are shown in Figure 2.
-
-![](_page_9_Figure_4.jpeg)
 
 **Figure 2.** Performance comparison varying the number of attributes and the value of k.
 

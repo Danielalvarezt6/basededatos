@@ -1,5 +1,5 @@
 """
-Genera gráficas y tabla comparativa en ESPAÑOL para el cartel académico.
+Genera gráficas y tabla comparativa
 Dataset: ASSISTments — Perfiles de comportamiento de estudiantes
 
 Compara 3 herramientas:
@@ -14,16 +14,24 @@ Figuras generadas:
 
 Tablas exportadas en CSV con columnas en español.
 
-Salidas en: results/assistments/figuras/
+Salidas en: results/assistments/figuras/ (relativo a la raíz del repositorio).
 """
 
 import os
+import sys
 import warnings
-import numpy as np
-import pandas as pd
+from pathlib import Path
+
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import numpy as np
+import pandas as pd
+
+_scripts_dir = Path(__file__).resolve().parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from paths import FIGURAS_DIR, RESULTS_ASSISTMENTS
 
 warnings.filterwarnings("ignore")
 matplotlib.rcParams.update({
@@ -36,8 +44,8 @@ matplotlib.rcParams.update({
     "ytick.labelsize": 9,
 })
 
-DIRECTORIO_RESULTADOS = "results/assistments"
-DIRECTORIO_FIGURAS    = "results/assistments/figuras"
+DIRECTORIO_RESULTADOS = str(RESULTS_ASSISTMENTS)
+DIRECTORIO_FIGURAS    = str(FIGURAS_DIR)
 
 # CSV de entrada
 CSV_P1_EXT    = os.path.join(DIRECTORIO_RESULTADOS, "prueba1_extension.csv")
@@ -456,14 +464,22 @@ def figura5_carga_vs_ejecucion():
         print("[!] Sin columna 'tiempo_carga_s'. Vuelve a ejecutar los benchmarks.")
         return
 
+    # Misma escala Y en todos los paneles: máximo de la altura total (carga + K-Means)
+    y_max_global = max(
+        d["cargas"][i] + d["ejecuciones"][i]
+        for d in datos.values()
+        for i in range(len(d["cargas"]))
+    )
+    y_max_global *= 1.08  # margen superior para etiquetas
+
     n_herr = len(datos)
-    fig, axes = plt.subplots(1, n_herr, figsize=(6 * n_herr, 6), sharey=False)
+    fig, axes = plt.subplots(1, n_herr, figsize=(6 * n_herr, 6), sharey=True)
     if n_herr == 1:
         axes = [axes]
 
     fig.suptitle(
         "Figura 5 — Tiempo de carga de datos vs. Tiempo de ejecución K-Means\n"
-        f"Comparativa por herramienta (k = {k_fijo} grupos, Dataset ASSISTments)",
+        f"Comparativa por herramienta (k = {k_fijo} grupos, Dataset ASSISTments — misma escala Y)",
         fontsize=13, fontweight="bold", y=1.02,
     )
 
@@ -475,10 +491,13 @@ def figura5_carga_vs_ejecucion():
         ax.set_xticks(x)
         ax.set_xticklabels(d["etiquetas"])
         ax.set_xlabel("Número de registros")
-        ax.set_ylabel("Tiempo (s)")
+        ax.set_ylim(0, y_max_global)
         ax.set_title(nombre)
         ax.legend(fontsize=9)
         ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+
+    # Etiqueta Y solo en el primer panel (sharey evita duplicar ticks)
+    axes[0].set_ylabel("Tiempo (s)")
 
     plt.tight_layout()
     ruta = os.path.join(DIRECTORIO_FIGURAS, "figura5_carga_vs_ejecucion.png")

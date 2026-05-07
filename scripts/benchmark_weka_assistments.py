@@ -11,10 +11,21 @@ Salidas:
 
 import os
 import subprocess
+import sys
 import tempfile
 import time
+from pathlib import Path
+
 import pandas as pd
 import psycopg2
+
+_scripts_dir = Path(__file__).resolve().parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from paths import RESULTS_ASSISTMENTS
+
+CSV_PRUEBA1_WEKA = str(RESULTS_ASSISTMENTS / "prueba1_weka.csv")
+CSV_PRUEBA2_WEKA = str(RESULTS_ASSISTMENTS / "prueba2_weka.csv")
 
 # =====================================================
 # CONFIGURACIÓN
@@ -24,7 +35,7 @@ JAVA_EXE_PATH = r"C:\Program Files\Weka-3-8-7\jre\jre-25.0.2-full\bin\java.exe"
 
 DB_NAME     = "assistments_clustering"
 DB_USER     = "postgres"
-DB_PASSWORD = "danonino32"
+DB_PASSWORD = os.environ.get("PGPASSWORD", "danonino32")
 DB_HOST     = "127.0.0.1"
 DB_PORT     = "5432"
 
@@ -112,7 +123,7 @@ def ejecutar_weka_kmeans(arff_path: str, k: int,
 # PRUEBA 1 — Variando registros
 # =====================================================
 def prueba1_weka():
-    os.makedirs("results/assistments", exist_ok=True)
+    os.makedirs(RESULTS_ASSISTMENTS, exist_ok=True)
     resultados = []
 
     print("\n" + "=" * 70)
@@ -188,8 +199,8 @@ def prueba1_weka():
 
     if resultados:
         pd.DataFrame(resultados).to_csv(
-            "results/assistments/prueba1_weka.csv", index=False, encoding="utf-8")
-        print("\n[✓] Guardado: results/assistments/prueba1_weka.csv")
+            CSV_PRUEBA1_WEKA, index=False, encoding="utf-8")
+        print(f"\n[✓] Guardado: {CSV_PRUEBA1_WEKA}")
 
     cur.close()
     conn.close()
@@ -200,7 +211,7 @@ def prueba1_weka():
 # PRUEBA 2 — Variando atributos
 # =====================================================
 def prueba2_weka():
-    os.makedirs("results/assistments", exist_ok=True)
+    os.makedirs(RESULTS_ASSISTMENTS, exist_ok=True)
     resultados = []
 
     print("\n" + "=" * 70)
@@ -274,8 +285,8 @@ def prueba2_weka():
 
     if resultados:
         pd.DataFrame(resultados).to_csv(
-            "results/assistments/prueba2_weka.csv", index=False, encoding="utf-8")
-        print("\n[✓] Guardado: results/assistments/prueba2_weka.csv")
+            CSV_PRUEBA2_WEKA, index=False, encoding="utf-8")
+        print(f"\n[✓] Guardado: {CSV_PRUEBA2_WEKA}")
 
     cur.close()
     conn.close()

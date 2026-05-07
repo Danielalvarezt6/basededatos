@@ -16,12 +16,20 @@ Nota: los nombres con paréntesis se mantienen exactamente como en el dataset
 import csv
 import io
 import os
-import psycopg2
-import pandas as pd
+import sys
+from pathlib import Path
 
-CSV_PATH    = r"C:\Users\deat_\Downloads\fuentescartelcecen\dataset_ASSISTment\dataset.csv"
+import pandas as pd
+import psycopg2
+
+_scripts_dir = Path(__file__).resolve().parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from paths import DEFAULT_DATASET_CSV
+
+CSV_PATH    = str(DEFAULT_DATASET_CSV)
 DB_USER     = "postgres"
-DB_PASSWORD = "danonino32"
+DB_PASSWORD = os.environ.get("PGPASSWORD", "danonino32")
 DB_HOST     = "127.0.0.1"
 DB_PORT     = "5432"
 DB_NAME     = "assistments_clustering"

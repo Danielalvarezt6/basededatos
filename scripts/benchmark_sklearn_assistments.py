@@ -9,19 +9,30 @@ Salidas:
 """
 
 import os
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import psycopg2
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 
+_scripts_dir = Path(__file__).resolve().parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from paths import RESULTS_ASSISTMENTS
+
+CSV_PRUEBA1_SKLEARN = str(RESULTS_ASSISTMENTS / "prueba1_sklearn.csv")
+CSV_PRUEBA2_SKLEARN = str(RESULTS_ASSISTMENTS / "prueba2_sklearn.csv")
+
 # =====================================================
 # CONFIGURACIÓN
 # =====================================================
 DB_NAME     = "assistments_clustering"
 DB_USER     = "postgres"
-DB_PASSWORD = "danonino32"
+DB_PASSWORD = os.environ.get("PGPASSWORD", "danonino32")
 DB_HOST     = "127.0.0.1"
 DB_PORT     = "5432"
 
@@ -87,7 +98,7 @@ def correr_kmeans(X: np.ndarray, k: int) -> tuple[float, int, float]:
 # PRUEBA 1 — Variando registros
 # =====================================================
 def prueba1_sklearn():
-    os.makedirs("results/assistments", exist_ok=True)
+    os.makedirs(RESULTS_ASSISTMENTS, exist_ok=True)
     resultados = []
 
     print("\n" + "=" * 70)
@@ -156,8 +167,8 @@ def prueba1_sklearn():
 
     if resultados:
         pd.DataFrame(resultados).to_csv(
-            "results/assistments/prueba1_sklearn.csv", index=False, encoding="utf-8")
-        print("\n[✓] Guardado: results/assistments/prueba1_sklearn.csv")
+            CSV_PRUEBA1_SKLEARN, index=False, encoding="utf-8")
+        print(f"\n[✓] Guardado: {CSV_PRUEBA1_SKLEARN}")
 
     cur.close()
     conn.close()
@@ -168,7 +179,7 @@ def prueba1_sklearn():
 # PRUEBA 2 — Variando atributos
 # =====================================================
 def prueba2_sklearn():
-    os.makedirs("results/assistments", exist_ok=True)
+    os.makedirs(RESULTS_ASSISTMENTS, exist_ok=True)
     resultados = []
 
     print("\n" + "=" * 70)
@@ -235,8 +246,8 @@ def prueba2_sklearn():
 
     if resultados:
         pd.DataFrame(resultados).to_csv(
-            "results/assistments/prueba2_sklearn.csv", index=False, encoding="utf-8")
-        print("\n[✓] Guardado: results/assistments/prueba2_sklearn.csv")
+            CSV_PRUEBA2_SKLEARN, index=False, encoding="utf-8")
+        print(f"\n[✓] Guardado: {CSV_PRUEBA2_SKLEARN}")
 
     cur.close()
     conn.close()

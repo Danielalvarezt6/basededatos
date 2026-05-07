@@ -2,6 +2,8 @@
 **Extensión K-Means en PostgreSQL vs. Weka vs. scikit-learn**  
 Dataset ASSISTments — 6.1M interacciones reales
 
+> Los scripts de benchmark están en la carpeta **`scripts/`** del repositorio. Las tablas de este documento que citan archivos `.py` se refieren a `scripts/<nombre>.py`.
+
 ---
 
 ## 1. Resumen Ejecutivo
@@ -17,7 +19,7 @@ Los scripts implementan una comparativa entre tres herramientas de clustering K-
 | P5 | Comparabilidad | Weka escribe un archivo ARFF a disco; extensión y sklearn operan en memoria | La comparación mezcla arquitecturas radicalmente distintas sin documentarlo |
 | P6 | Metodología | El paper usa datos sintéticos de Wine Quality; los scripts usan ASSISTments reales | Divergencia entre el paper original y la implementación a validar |
 | P7 | Robustez | Sin repeticiones (`n_runs=1`) — resultados sujetos a variabilidad de hardware | Conclusiones no reproducibles estadísticamente |
-| P8 | Código | `generar_graficas.py` usa `col_tiempo='tiempo_total_s'` para Weka, que es incorrecto | Las tablas resumen muestran valores erróneos para Weka |
+| P8 | Código | `generar_graficas_assistments.py` usa `col_tiempo='tiempo_total_s'` para Weka, que es incorrecto | Las tablas resumen muestran valores erróneos para Weka |
 | P9 | Código | `result_py()` en la extensión lee de `clustering.cl_data` en vez de `cl_data_pre` | Los resultados muestran valores sin normalizar |
 | P10 | Código | `elbow_py` y `silhouette_py` usan `n_init=10`, pero `kmeans_py` usa `n_init=1` | El modelo de evaluación es más robusto que el de producción |
 
