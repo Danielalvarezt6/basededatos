@@ -1,8 +1,8 @@
 """
-Benchmark Weka — Dataset ASSISTments (6.1M interacciones reales)
+Benchmark Weka — Dataset ASSISTments 
 Ejecuta SimpleKMeans desde línea de comandos para:
-  - Prueba 1: variando número de registros (1K → 1M, todos reales)
-  - Prueba 2: variando número de atributos (100K filas reales fijas)
+  - Prueba 1: variando número de registros (1K → 1M)
+  - Prueba 2: variando número de atributos (100K fijas)
 
 Salidas:
   results/assistments/prueba1_weka.csv
@@ -35,7 +35,7 @@ JAVA_EXE_PATH = r"C:\Program Files\Weka-3-8-7\jre\jre-25.0.2-full\bin\java.exe"
 
 DB_NAME     = "assistments_clustering"
 DB_USER     = "postgres"
-DB_PASSWORD = os.environ.get("PGPASSWORD", "danonino32")
+DB_PASSWORD = os.environ.get("PGPASSWORD", "password")
 DB_HOST     = "127.0.0.1"
 DB_PORT     = "5432"
 
@@ -60,29 +60,6 @@ TODAS_LAS_COLUMNAS = [
 
 SUBCONJUNTOS_ATRIBUTOS = {n: TODAS_LAS_COLUMNAS[:n] for n in [3, 5, 7, 9, 11]}
 
-
-# =====================================================
-# UTILIDADES
-# =====================================================
-def crear_tabla_muestra(cur, conn, tamano: int, cols: list) -> str:
-    """
-    Materializa N filas aleatorias en una tabla temporal (no se cronometra).
-    Usa setseed(0.42) — IDÉNTICO a la extensión y sklearn (corrección P1).
-    Devuelve el nombre de la tabla para que el benchmark la lea después.
-    """
-    nombre = f"_muestra_{tamano}"
-    col_clause = ", ".join(f'"{c}"' for c in cols)
-    # Semilla idéntica a la extensión: setseed(0.42) — NO setseed(0.000000042)
-    cur.execute("SELECT setseed(0.42)")
-    cur.execute(f"""
-        DROP TABLE IF EXISTS {nombre};
-        CREATE TEMP TABLE {nombre} AS
-        SELECT {col_clause}
-        FROM {TABLA_REAL}
-        ORDER BY random()
-        LIMIT {tamano}
-    """)
-    return nombre
 
 
 def df_a_arff(df: pd.DataFrame, nombre_relacion: str = "assistments") -> str:
@@ -127,8 +104,8 @@ def prueba1_weka():
     resultados = []
 
     print("\n" + "=" * 70)
-    print("PRUEBA 1 — Weka: variando registros (datos REALES)")
-    print("Dataset: ASSISTments — 6.1M interacciones reales")
+    print("PRUEBA 1 — Weka: variando registros)")
+    print("Dataset: ASSISTments")
     print("=" * 70)
 
     if not os.path.exists(WEKA_JAR_PATH):

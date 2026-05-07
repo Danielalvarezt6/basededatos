@@ -32,7 +32,7 @@ CSV_PRUEBA2_SKLEARN = str(RESULTS_ASSISTMENTS / "prueba2_sklearn.csv")
 # =====================================================
 DB_NAME     = "assistments_clustering"
 DB_USER     = "postgres"
-DB_PASSWORD = os.environ.get("PGPASSWORD", "danonino32")
+DB_PASSWORD = os.environ.get("PGPASSWORD", "password")
 DB_HOST     = "127.0.0.1"
 DB_PORT     = "5432"
 
@@ -69,7 +69,6 @@ def crear_tabla_muestra(cur, conn, tamano: int, cols: list) -> str:
     """
     nombre = f"_muestra_{tamano}"
     col_clause = ", ".join(f'"{c}"' for c in cols)
-    # Semilla idéntica a la extensión: setseed(0.42) — NO setseed(0.000000042)
     cur.execute("SELECT setseed(0.42)")
     cur.execute(f"""
         DROP TABLE IF EXISTS {nombre};
@@ -120,14 +119,12 @@ def prueba1_sklearn():
         print(f"\n{'─' * 60}")
         print(f"[+] Preparando muestra de {tamano:,} filas (ORDER BY random — no se mide)...")
         try:
-            # Crear tabla temporal con misma semilla que la extensión — NO se cronometra
             nombre_tmp = crear_tabla_muestra(cur, conn, tamano, TODAS_LAS_COLUMNAS)
             print(f"[✓] Tabla temporal lista: {nombre_tmp}")
         except Exception as e:
             print(f"[!] Error preparando muestra: {e}")
             continue
 
-        # === MEDICIÓN: leer desde tabla temp + normalizar (misma condición que extensión) ===
         try:
             t0_descarga = time.perf_counter()
             df = pd.read_sql(f'SELECT * FROM {nombre_tmp}', conn)
@@ -193,7 +190,6 @@ def prueba2_sklearn():
     conn.autocommit = True
     cur = conn.cursor()
 
-    # Crear tabla temporal fija (NO se cronometra)
     print(f"\n[+] Preparando muestra fija de {N_PRUEBA2:,} filas (no se mide)...")
     try:
         nombre_tmp = crear_tabla_muestra(cur, conn, N_PRUEBA2, TODAS_LAS_COLUMNAS)
@@ -203,7 +199,6 @@ def prueba2_sklearn():
         conn.close()
         return []
 
-    # Leer de tabla temp (se mide una vez) y reutilizar para todos los subconjuntos
     t0_desc = time.perf_counter()
     df_completo = pd.read_sql(f'SELECT * FROM {nombre_tmp}', conn)
     t_descarga_p2 = time.perf_counter() - t0_desc

@@ -1,6 +1,6 @@
-# K-Means en PostgreSQL vía PL/Python — Réplica con dataset distinto
+# EVALUACIÓN COMPARATIVA DE RENDIMIENTO: ARQUITECTURA MEDIANAMENTE ACOPLADA PARA K-MEANS EN POSTGRESQL, WEKA Y SCIKIT-LEARN
 
-Repositorio del proyecto para el cartel académico presentado en el CECEN.
+Trabajo presentado para presentar en un cartel en el **Congreso Estatal de Ciencias Exactas y Naturales**: se mide y compara el rendimiento de **K-means** en tres configuraciones — **PostgreSQL con extensión PL/Python** (arquitectura medianamente acoplada en un SGBD), **Weka** y **Python scikit-learn** — usando el dataset **ASSISTments**.
 
 > **Artículo de referencia**
 >
@@ -12,26 +12,39 @@ Repositorio del proyecto para el cartel académico presentado en el CECEN.
 
 ---
 
-## ¿Qué hace este proyecto?
+## Propósito del proyecto
 
-El paper original propone una **extensión PL/Python para PostgreSQL** que ejecuta K-Means dentro de la base de datos (arquitectura medianamente acoplada) y la compara contra **Weka** y **KNIME** sobre el dataset **Wine Quality (21,000 registros)**. Concluye que la extensión supera a las herramientas externas en grandes volúmenes y alta complejidad.
+El artículo de referencia implementa K-means **dentro de PostgreSQL** y lo compara con herramientas externas concluyendo ventajas en escenarios de mayor volumen. Este repositorio **replica el diseño de la extensión** y repite el tipo de experimento con **otro dataset** y **otra tercera herramienta** (sklearn en lugar de KNIME), manteniendo parámetros de algoritmo alineados entre las tres rutas.
 
-Este proyecto **toma esa extensión como base** (implementada fielmente según las Tablas 2, 3 y 4 del paper) y prueba si esa conclusión se sostiene en un escenario distinto.
+Objetivos concretos:
 
-### Aportación de este trabajo
+- **Comparar tiempos de forma equitativa:** mismas filas (muestra aleatoria reproducible), mismo `k-means++`, mismas `max_iter`, misma semilla del algoritmo y del muestreo.
+- **Separar qué se mide:** *carga + preprocesamiento hasta poder entrenar*, *llamada completa al entrenamiento* (donde aplica) y **`tiempo_respuesta_s`** como métrica principal agregada para las tres herramientas; la extensión además expone **`tiempo_kmeans_interno_s`** (solo el `fit()` interno), comparable al “model construction time” del paper.
+
+---
+
+## Qué se hizo en este repositorio
+
+| Componente | Descripción |
+|------------|-------------|
+| **`sql/kmeans_extension.sql`** | Instala el esquema `clustering` y las **10 funciones PL/Python** (carga, preprocesamiento, `kmeans_py`, resultados, inercia, codo, silueta, etc.), fiel al paper. |
+| **`scripts/cargar_assistments_completo.py`** | Copia **`data/dataset.csv`** a PostgreSQL (tabla base del benchmark). El CSV no se versiona; instrucciones en `data/README.md`. |
+| **`scripts/benchmark_test1_assistments.py`** | Prueba 1 — **Extensión**: variar tamaño de muestra (registros). Salida: `results/assistments/prueba1_extension.csv`. |
+| **`scripts/benchmark_test2_assistments.py`** | Prueba 2 — **Extensión**: variar número de **atributos**. Salida: `results/assistments/prueba2_extension.csv`. |
+| **`scripts/benchmark_sklearn_assistments.py`** | Mismas pruebas 1 y 2 con **scikit-learn**. CSV: `prueba1_sklearn.csv`, `prueba2_sklearn.csv`. |
+| **`scripts/benchmark_weka_assistments.py`** | Mismas pruebas con **Weka** (exportación ARFF). CSV: `prueba1_weka.csv`, `prueba2_weka.csv`. |
+| **`scripts/generar_graficas_assistments.py`** | Lee los CSV anteriores y genera **6 figuras** en `results/assistments/figuras/` más **`tabla_resumen_prueba1.csv`** y **`tabla_resumen_prueba2.csv`** (columna principal: `tiempo_respuesta_s`). |
+
+### Cómo se diferencia del paper original
 
 | Eje | Paper original | Este trabajo |
 |---|---|---|
-| **Dataset** | Wine Quality (sintético, 21K) | **ASSISTments (real, 6.1M interacciones)** |
-| **Escala** | 1K → 1M (sintetizados) | 1K → 1M (muestreo aleatorio real) |
-| **Tercera herramienta** | KNIME (loosely coupled, GUI Java) | **Python sklearn (loosely coupled, sin GUI)** |
-| **Métricas reportadas** | "Model construction time" (un valor) | `tiempo_carga`, `tiempo_kmeans`, `tiempo_kmeans_interno`, `tiempo_respuesta` (4 desagregadas) |
+| **Dataset** | Wine Quality (21 K, contexto del paper) | **ASSISTments** (real, millones de filas en bruto; benchmarks con muestreo 1 K–1 M) |
+| **Escala** | 1 K → 1 M según diseño del artículo | 1 K → 1 M con **muestreo aleatorio reproducible** sobre datos reales |
+| **Tercera herramienta** | KNIME | **scikit-learn** (acoplamiento débil, sin capa Java/GUI) |
+| **Métricas** | Un tiempo tipo “model construction” | Varios campos CSV; comparación principal por **`tiempo_respuesta_s`** |
 
-Sustituir KNIME por sklearn permite responder una pregunta más estricta:
-
-> ¿La ventaja de la extensión vs Weka/KNIME viene de **la arquitectura medianamente acoplada** o solo del **overhead de plataforma de las herramientas Java** comparadas?
-
-Si la extensión también gana a sklearn (que es básicamente el mismo motor sin overhead), la ventaja es arquitectónica. Si pierde, la ventaja del paper se debía principalmente al overhead de Weka/KNIME.
+Sustituir KNIME por sklearn acota la pregunta: *¿la ventaja relativa observada en el paper se explica por la integración en el SGBD o en buena medida por el overhead de la plataforma Java?*
 
 ---
 
@@ -249,11 +262,19 @@ pip install --target "C:\python_packages" numpy pandas scikit-learn
 
 ---
 
-## Ejecución del pipeline completo
+## Cómo usar el proyecto
 
-> El archivo `dataset.csv` (2.8 GB) no está versionado. Descárgalo desde: <https://www.kaggle.com/datasets/nicolaswattiez/skillbuilder-data-2009-2010>
+1. **Clona el repositorio** y abre una terminal en la **raíz del repo** (donde está `README.md`).
+2. **Crea la base de datos** en PostgreSQL (ej. `assistments_clustering`), habilita `plpython3u` y revisa usuario/contraseña/host en cada script bajo `scripts/` (o usa variables de entorno como `PGPASSWORD` donde estén soportadas).
+3. **Dependencias:** instala los paquetes listados en [Requisitos para reproducir](#requisitos-para-reproducir) y configura el mismo Python para **PL/Python** que indica `sql/kmeans_extension.sql` (ruta a `numpy`, `pandas`, `scikit-learn`).
+4. **Dataset:** descarga ASSISTments desde Kaggle, guarda el CSV como **`data/dataset.csv`** (ver `data/README.md`).
+5. **Ejecuta los pasos en orden** (instalación SQL → carga → benchmarks → gráficas):
 
-Ejecuta desde la **raíz del repositorio**:
+### Pipeline completo (comandos)
+
+> El archivo `dataset.csv` (~2,8 GB) no está en Git. Fuente: <https://www.kaggle.com/datasets/nicolaswattiez/skillbuilder-data-2009-2010>
+
+Desde la raíz del repositorio:
 
 ```powershell
 # 1. Habilitar la extensión PL/Python e instalar las funciones
@@ -262,15 +283,19 @@ psql -U postgres -d assistments_clustering -f sql/kmeans_extension.sql
 # 2. Colocar dataset.csv en data/ (ver data/README.md) y cargar ~6.1M filas a PostgreSQL
 python scripts/cargar_assistments_completo.py
 
-# 3. Correr los benchmarks (las tres herramientas)
+# 3. Correr los benchmarks (las tres herramientas; puedes ejecutar solo los que necesites)
 python scripts/benchmark_test1_assistments.py
 python scripts/benchmark_test2_assistments.py
 python scripts/benchmark_sklearn_assistments.py
 python scripts/benchmark_weka_assistments.py
 
-# 4. Generar todas las figuras y tablas comparativas (recomendado: mismo Python donde está matplotlib)
+# 4. Generar las 6 figuras y las tablas resumen (usa los CSV en results/assistments/)
 python scripts/generar_graficas_assistments.py
 ```
+
+**Salidas útiles:** CSV en `results/assistments/`; PNG en `results/assistments/figuras/`. Opcionalmente puedes redirigir logs a `results/assistments/logs/` (carpeta ignorada por `.gitignore`).
+
+**Weka:** por defecto los scripts asumen instalación en `C:\Program Files\Weka-3-8-7\`; ajústalo en `benchmark_weka_assistments.py` si tu ruta difiere.
 
 ---
 

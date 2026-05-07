@@ -1,5 +1,5 @@
 """
-Carga el dataset ASSISTments completo (~6M filas) a PostgreSQL usando COPY.
+Carga el dataset ASSISTments a PostgreSQL
 Base de datos: assistments_clustering
 Tabla destino: interacciones
 
@@ -29,14 +29,14 @@ from paths import DEFAULT_DATASET_CSV
 
 CSV_PATH    = str(DEFAULT_DATASET_CSV)
 DB_USER     = "postgres"
-DB_PASSWORD = os.environ.get("PGPASSWORD", "danonino32")
+DB_PASSWORD = os.environ.get("PGPASSWORD", "password")
 DB_HOST     = "127.0.0.1"
 DB_PORT     = "5432"
 DB_NAME     = "assistments_clustering"
 TABLA       = "interacciones"
 CHUNK_SIZE  = 100_000
 
-# Columnas originales del CSV que se cargarán
+# Columnas del dataset ASSISTments que se cargarán
 COLUMNAS = [
     "ms_first_response",
     "hint_count",
